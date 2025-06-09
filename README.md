@@ -6,3 +6,8 @@ In this repo, I'm building a large language model comparable to GPT-2, using the
 3. [Attention Is All You Need](https://arxiv.org/abs/1706.03762), by Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N. Gomez, Lukasz Kaiser, and Illia Polosukhin.
 
 The code and my notes/explanations are in [gpt.ipynb](./gpt.ipynb).
+
+# Current Status
+
+I have a working, but untrained GPT-2 style LLM now. Because it's still untrained, it only outputs garbage.
+However, it outputs the exact correct garbage, so I know this implementation is equivalent to the book's.
