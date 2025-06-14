@@ -13,5 +13,5 @@ The LLM can now be trained on one example text, but the output is still pretty g
 
 # To run
 
-- `uv venv && uv pip sync`
+- `uv venv && source .venv/bin/activate && uv pip sync pyproject.toml`
 - Open in Jupyter Notebook
