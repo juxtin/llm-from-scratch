@@ -9,5 +9,9 @@ The code and my notes/explanations are in [gpt.ipynb](./gpt.ipynb).
 
 # Current Status
 
-I have a working, but untrained GPT-2 style LLM now. Because it's still untrained, it only outputs garbage.
-However, it outputs the exact correct garbage, so I know this implementation is equivalent to the book's.
+The LLM can now be trained on one example text, but the output is still pretty garby.
+
+# To run
+
+- `uv venv && uv pip sync`
+- Open in Jupyter Notebook
