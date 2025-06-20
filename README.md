@@ -9,9 +9,11 @@ The code and my notes/explanations are in [gpt.ipynb](./gpt.ipynb).
 
 # Current Status
 
-The LLM can now be trained on one example text, but the output is still pretty garby.
+This now includes all the code to train a model on Project Gutenberg and try out some completions.
+The results aren't great, but they're interesting.
 
 # To run
 
 - `uv venv && source .venv/bin/activate && uv pip sync pyproject.toml`
+- for CUDA support, `uv pip install --group cuda`
 - Open in Jupyter Notebook
