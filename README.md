@@ -18,7 +18,7 @@ In this repo, I'm building a large language model comparable to GPT-2, using the
 - Base GPT model is complete.
 - Training with learning rate warmup, cosine decay, and gradient clipping is complete.
 - The model can be loaded with pretrained weights from OpenAI, up to gpt2-xl.
-- Fine-tuning for spam classification is in progress.
+- There's a proof of concept for fine-tuning a model to classify text messages as spam or not spam.
 
 # To run
 
