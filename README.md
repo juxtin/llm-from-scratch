@@ -25,3 +25,12 @@ In this repo, I'm building a large language model comparable to GPT-2, using the
 - `uv venv && source .venv/bin/activate && uv pip sync pyproject.toml`
 - for CUDA support, `uv pip install --group cuda`
 - Open in Jupyter Notebook
+
+# MLflow dashboard
+
+To expose the MLflow dashboard (to get training metrics), run this in a terminal:
+
+```
+source .venv/bin/activate
+mlflow ui
+```
