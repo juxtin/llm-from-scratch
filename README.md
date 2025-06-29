@@ -12,7 +12,8 @@ In this repo, I'm building a large language model comparable to GPT-2, using the
 - Sections 4 and 5 of chapter 5, "Loading and saving model weights in PyTorch" and "Loading pretrained weights
   from OpenAI," are in [openai.ipynb](./openai.ipynb).
 - Chapter 6, "Fine-Tuning For Classification," is in [classifier.ipynb](./classifier.ipynb).
-- Chapter 7, "Fine-Tuning to Follow Instructions," is in [chat.ipynb](./chat.ipynb).
+- Most of Chapter 7, "Fine-Tuning to Follow Instructions," is in [chat.ipynb](./chat.ipynb).
+- Chapter 7, section 8 "Evaluating the fine-tuned LLM," is in [grading_with_ollama.ipynb](./grading_with_ollama.ipynb).
 
 # Current Status
 
@@ -20,12 +21,15 @@ In this repo, I'm building a large language model comparable to GPT-2, using the
 - Training with learning rate warmup, cosine decay, and gradient clipping is complete.
 - The model can be loaded with pretrained weights from OpenAI, up to gpt2-xl.
 - There's a proof of concept for fine-tuning a model to classify text messages as spam or not spam.
-- LLM that is fine-tuned to follow simple instructions in progress
+- You can fine-tune the LLM to follow instructions using either an abbreviated set of examples (1,100) or a much larger one (52,000 examples).
+- You can use a second, better LLM to evaluate the results of this LLM.
+- I would like to do some refactoring and add more notes, but otherwise this is complete.
 
 # To run
 
 - `uv venv && source .venv/bin/activate && uv pip sync pyproject.toml`
 - for CUDA support, `uv pip install --group cuda`
+- if training, make sure to run `mlflow server` or `mlflow ui`
 - Open in Jupyter Notebook
 
 # MLflow dashboard
