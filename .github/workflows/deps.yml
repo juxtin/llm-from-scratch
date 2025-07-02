@@ -14,4 +14,4 @@ jobs:
     steps:
       - uses: actions/checkout@v3
       - name: Component detection
-        uses: advanced-security/component-detection-dependency-submission-action@c936885d12e9329081b08dae39b37f07f1fa7cca
+        uses: advanced-security/component-detection-dependency-submission-action@5b2736e4f473599c7b91b91df18e12057c3ae6a3
