@@ -23,7 +23,7 @@ In this repo, I'm building a large language model comparable to GPT-2, using the
 - There's a proof of concept for fine-tuning a model to classify text messages as spam or not spam.
 - You can fine-tune the LLM to follow instructions using either an abbreviated set of examples (1,100) or a much larger one (52,000 examples).
 - You can use a second, better LLM to evaluate the results of this LLM.
-- I would like to do some refactoring and add more notes, but otherwise this is complete.
+- Massive refactor in progress.
 
 # To run
 
