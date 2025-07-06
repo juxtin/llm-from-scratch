@@ -7,6 +7,8 @@ In this repo, I'm building a large language model comparable to GPT-2, using the
 
 # Notebooks:
 
+I recommend checking out the notebooks in this order. This follows the plan of the book, although some of the notebooks are now significantly more advanced than what the book itself covers.
+
 1. [gpt](./gpt.ipynb): A great place to start. This file implements the core GPT architecture as a Torch module. It explains a lot of the math related to inference, but avoids the elements that are specific to training.
 2. [training](./gpt.ipynb): Includes both a quick-and-dirty minimal training approach and a much more mature, modular training function with swappable metrics, example generation, and learning schedulers.
 3. [project_gutenberg](./project_gutenberg.ipynb): Follows the training notebook with a real-world(-ish) example. In this case, it trains a model on the [deepmind/pg19](https://huggingface.co/datasets/deepmind/pg19) dataset, which includes about 28,000 English-language books in the public domain.
