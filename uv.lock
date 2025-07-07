@@ -310,6 +310,20 @@ wheels = [
 ]
 
 [[package]]
+name = "cattrs"
+version = "25.1.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "attrs" },
+    { name = "exceptiongroup", marker = "python_full_version < '3.11'" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/57/2b/561d78f488dcc303da4639e02021311728fb7fda8006dd2835550cddd9ed/cattrs-25.1.1.tar.gz", hash = "sha256:c914b734e0f2d59e5b720d145ee010f1fd9a13ee93900922a2f3f9d593b8382c", size = 435016, upload-time = "2025-06-04T20:27:15.44Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/18/b0/215274ef0d835bbc1056392a367646648b6084e39d489099959aefcca2af/cattrs-25.1.1-py3-none-any.whl", hash = "sha256:1b40b2d3402af7be79a7e7e097a9b4cd16d4c06e6d526644b0b26a063a1cc064", size = 69386, upload-time = "2025-06-04T20:27:13.969Z" },
+]
+
+[[package]]
 name = "certifi"
 version = "2025.4.26"
 source = { registry = "https://pypi.org/simple" }
@@ -499,6 +513,33 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/ff/c0/91f1215d0d9f9f343e4773ba6c9b89e8c0cc7a64a6263f21139da639d848/contourpy-1.3.2-pp311-pypy311_pp73-macosx_10_15_x86_64.whl", hash = "sha256:5f5964cdad279256c084b69c3f412b7801e15356b16efa9d78aa974041903da0", size = 266807, upload-time = "2025-04-15T17:45:15.535Z" },
     { url = "https://files.pythonhosted.org/packages/d4/79/6be7e90c955c0487e7712660d6cead01fa17bff98e0ea275737cc2bc8e71/contourpy-1.3.2-pp311-pypy311_pp73-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:49b65a95d642d4efa8f64ba12558fcb83407e58a2dfba9d796d77b63ccfcaff5", size = 318729, upload-time = "2025-04-15T17:45:20.166Z" },
     { url = "https://files.pythonhosted.org/packages/87/68/7f46fb537958e87427d98a4074bcde4b67a70b04900cfc5ce29bc2f556c1/contourpy-1.3.2-pp311-pypy311_pp73-win_amd64.whl", hash = "sha256:8c5acb8dddb0752bf252e01a3035b21443158910ac16a3b0d20e7fed7d534ce5", size = 221791, upload-time = "2025-04-15T17:45:24.794Z" },
+]
+
+[[package]]
+name = "coremltools"
+version = "8.3.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "attrs" },
+    { name = "cattrs" },
+    { name = "numpy" },
+    { name = "packaging" },
+    { name = "protobuf" },
+    { name = "pyaml" },
+    { name = "sympy" },
+    { name = "tqdm" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/93/f1/322d8cb29c59b8710375927a6d776887ed4c6caafd036cf4fbe14dcdb767/coremltools-8.3.0.tar.gz", hash = "sha256:c95a6051606b71273d669b107b5f32d3191f595e6821b8db04baf49d52d0704f", size = 1642701, upload-time = "2025-04-28T20:14:06.235Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/2a/9e/b9070c8d44c7d5e3a552d5b19ebe07fd9814b72ce7be452138596bdcbc18/coremltools-8.3.0-cp310-none-macosx_10_15_x86_64.whl", hash = "sha256:730831927cde3ba39ae6f80b72c5fbff8820393f2f97ec1c98ab33ec08094c4e", size = 2767146, upload-time = "2025-04-28T20:13:28.763Z" },
+    { url = "https://files.pythonhosted.org/packages/63/ad/6293617987fc4de90030d0556ede0fcb7fc0c17e9907146e18f400efe482/coremltools-8.3.0-cp310-none-macosx_11_0_arm64.whl", hash = "sha256:5f95af47531fb2f01a501ae5fad01e7dfb1cc0b70b035fbed6d788201cbc9a56", size = 2740012, upload-time = "2025-04-28T20:13:31.996Z" },
+    { url = "https://files.pythonhosted.org/packages/c4/c9/f602c2a7861a9e8a2555a083d9558d37d8811515bacd597eb3b40ba7757d/coremltools-8.3.0-cp310-none-manylinux1_x86_64.whl", hash = "sha256:e505c2b89b5bd1b1425466a8d45cc6edd75c81b0c3834403992a575a1c134c34", size = 2292024, upload-time = "2025-04-28T20:13:35.214Z" },
+    { url = "https://files.pythonhosted.org/packages/72/a6/31dc762e0317d26b2d21919e12c42644ecab8401ff2aa6f00215156a45ee/coremltools-8.3.0-cp311-none-macosx_10_15_x86_64.whl", hash = "sha256:59ff68ec62bf2c0421041142117e37ef679f46e6304653aea64cbe8a39a5f9bc", size = 2770927, upload-time = "2025-04-28T20:13:37.598Z" },
+    { url = "https://files.pythonhosted.org/packages/69/32/847810ade6b7105fcf810188f41dc4bb25e2278f505f8a08185bd8787cbb/coremltools-8.3.0-cp311-none-macosx_11_0_arm64.whl", hash = "sha256:5f843f5a6be740d84eb7c80c49766da0b9bd67e86a9cb1dbfce838ab5366feb3", size = 2743785, upload-time = "2025-04-28T20:13:39.291Z" },
+    { url = "https://files.pythonhosted.org/packages/36/9c/a6fbc66e300e176f94ab6f90530d33c703868126572fb9119cc952b8ecc6/coremltools-8.3.0-cp311-none-manylinux1_x86_64.whl", hash = "sha256:3d6d5828688347b5f6e31f1ce522b5df5733246611dbcb09fbc94687ff0fc16a", size = 2293270, upload-time = "2025-04-28T20:13:41.847Z" },
+    { url = "https://files.pythonhosted.org/packages/94/74/0fea61f7644dda226fe8da364c9e68df3f1f7c6f59e6e8646215581af3d0/coremltools-8.3.0-cp312-none-macosx_10_15_x86_64.whl", hash = "sha256:2bfb57173a9fcbeb1f5bd3bfc90169c817ee04882564eafb79deafa494f96523", size = 2770175, upload-time = "2025-04-28T20:13:43.523Z" },
+    { url = "https://files.pythonhosted.org/packages/56/2b/a06357e7881bacc92a4d125064202bf48acfe63368c781f49d688bca3b51/coremltools-8.3.0-cp312-none-macosx_11_0_arm64.whl", hash = "sha256:e8a70ca3b34676cbcb61f70e1192593062eb85a9a64e29e03268d6f280b2c86e", size = 2740828, upload-time = "2025-04-28T20:13:45.189Z" },
+    { url = "https://files.pythonhosted.org/packages/a2/52/6c15580d9049930dc6319d70cc065622e569afc1307d177bf45cb9f82076/coremltools-8.3.0-cp312-none-manylinux1_x86_64.whl", hash = "sha256:36ee21f1ab35bd45500ce006b366d45f4210a86882283d6cf2e603faeaaf791c", size = 2292484, upload-time = "2025-04-28T20:13:47.288Z" },
 ]
 
 [[package]]
@@ -1650,6 +1691,9 @@ dependencies = [
 ]
 
 [package.dev-dependencies]
+apple = [
+    { name = "coremltools" },
+]
 cuda = [
     { name = "nvidia-cudnn-cu12" },
 ]
@@ -1676,6 +1720,7 @@ requires-dist = [
 ]
 
 [package.metadata.requires-dev]
+apple = [{ name = "coremltools", specifier = ">=8.3.0,<9.0.0" }]
 cuda = [{ name = "nvidia-cudnn-cu12", specifier = ">=9" }]
 dev = [
     { name = "mypy", specifier = ">=1.16.0,<2.0.0" },
@@ -2717,6 +2762,18 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/cd/05/0a34433a064256a578f1783a10da6df098ceaa4a57bbeaa96a6c0352786b/pure_eval-0.2.3.tar.gz", hash = "sha256:5f4e983f40564c576c7c8635ae88db5956bb2229d7e9237d03b3c0b0190eaf42", size = 19752, upload-time = "2024-07-21T12:58:21.801Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/8e/37/efad0257dc6e593a18957422533ff0f87ede7c9c6ea010a2177d738fb82f/pure_eval-0.2.3-py3-none-any.whl", hash = "sha256:1db8e35b67b3d218d818ae653e27f06c3aa420901fa7b081ca98cbedc874e0d0", size = 11842, upload-time = "2024-07-21T12:58:20.04Z" },
+]
+
+[[package]]
+name = "pyaml"
+version = "25.5.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pyyaml" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/c1/40/94f10f32ab952c5cca713d9ac9d8b2fdc37392d90eea403823eeac674c24/pyaml-25.5.0.tar.gz", hash = "sha256:5799560c7b1c9daf35a7a4535f53e2c30323f74cbd7cb4f2e715b16dd681a58a", size = 29812, upload-time = "2025-05-29T05:34:05.292Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/aa/7d/1b5061beff826f902285827261485a058b943332eba8a5532a0164735205/pyaml-25.5.0-py3-none-any.whl", hash = "sha256:b9e0c4e58a5e8003f8f18e802db49fd0563ada587209b13e429bdcbefa87d035", size = 26422, upload-time = "2025-05-29T05:34:03.594Z" },
 ]
 
 [[package]]
