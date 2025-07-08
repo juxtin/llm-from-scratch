@@ -9,19 +9,38 @@ for nb in notebooks/*.ipynb; do
   out="src/${name}.py"
 
   echo "Converting $nb → $out"
+  rm -f "$out"
 
-  # 1. convert to script in src/
+  # 1. convert to script in src/ (nbconvert will add .py for us)
   jupyter nbconvert --to script \
-    --output "${name}.py" \
+    --output "${name}" \
     --output-dir src \
     "$nb"
 
-  # 2. prepend the header
+
+  out="src/${name}.py"
   header="# Code generated from $nb by script/gen-py. DO NOT EDIT."
-  {
-    printf '%s\n\n' "$header"
-    cat "$out"
-  } > "${out}.tmp" && mv "${out}.tmp" "$out"
+  
+  # if the first line is a shebang, preserve it, then insert header
+  first=$(head -n1 "$out")
+  if [[ $first == "#!"* ]]; then
+    {
+      # shebang
+      echo "$first"
+      # gen-header + blank line
+      echo "$header"
+      echo
+      # rest of file (skip original shebang)
+      tail -n +2 "$out"
+    } > "${out}.fixed"
+  else
+    {
+      echo "$header"
+      echo
+      cat "$out"
+    } > "${out}.fixed"
+  fi
+  mv "${out}.fixed" "$out"
 done
 
 echo "Done."
