@@ -7,7 +7,7 @@ import sys
 
 def load_model() -> gpt.GPTModel:
     model = gpt.GPTModel(openai.GPT_CONFIG_355M)
-    training.load(model, optimizer=None, name="fine-tuned-355m-alpaca", device=gpt.get_device())
+    training.load(model, optimizer=None, name="355M-alpaca", base_path="models", device=gpt.get_device())
     model.to(gpt.get_device())
     return model
 
@@ -108,7 +108,7 @@ def ask_model(model: gpt.GPTModel, instruction: str) -> list[tuple[float, str]]:
     return pairs[prompt_len:]
 
 def intro():
-    print("Tokens in the response are color-coded to represent their probability:\n")
+    print("Tokens in the response are color-coded to represent their probability:")
     space = (0.0, " ")
     print_annotated([
         (0.0, "terrible"),
