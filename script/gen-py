@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# ensure output dir exists
+mkdir -p src
+
+for nb in notebooks/*.ipynb; do
+  name=$(basename "$nb" .ipynb)
+  out="src/${name}.py"
+
+  echo "Converting $nb → $out"
+
+  # 1. convert to script in src/
+  jupyter nbconvert --to script \
+    --output "${name}.py" \
+    --output-dir src \
+    "$nb"
+
+  # 2. prepend the header
+  header="# Code generated from $nb by script/gen-py. DO NOT EDIT."
+  {
+    printf '%s\n\n' "$header"
+    cat "$out"
+  } > "${out}.tmp" && mv "${out}.tmp" "$out"
+done
+
+echo "Done."
