@@ -11,10 +11,10 @@
 
 
 import import_ipynb
-import openai # type: ignore
-import gpt # type: ignore
-from gpt import get_device # type: ignore
-import training # type: ignore
+import openai  # type: ignore
+import gpt  # type: ignore
+from gpt import get_device  # type: ignore
+import training  # type: ignore
 import pandas as pd
 import urllib.request
 import ssl
@@ -43,6 +43,7 @@ zip_path = "sms_spam_collection.zip"
 extracted_path = "sms_spam_collection"
 data_file_path = Path(extracted_path) / "SMSSpamCollection.tsv"
 
+
 def download_and_unzip_spam_data(url, zip_path, extracted_path, data_file_path):
     if data_file_path.exists():
         print(f"{data_file_path} already exists. Skipping download and extraction.")
@@ -58,7 +59,7 @@ def download_and_unzip_spam_data(url, zip_path, extracted_path, data_file_path):
         zip_ref.extractall(extracted_path)
 
     original_file_path = Path(extracted_path) / "SMSSpamCollection"
-    os.rename(original_file_path, data_file_path)    
+    os.rename(original_file_path, data_file_path)
     print(f"File downloaded and saved as {data_file_path}")
 
 
@@ -105,9 +106,9 @@ def save_csv():
     balanced_df = create_balanced_dataset(df)
     balanced_df["Label"] = balanced_df["Label"].map({"ham": 0, "spam": 1})
     train_df, validation_df, test_df = random_split(balanced_df, 0.7, 0.1)
-    train_df.to_csv("train.csv", index=None) # type:ignore
-    validation_df.to_csv("validation.csv", index=None) # type:ignore
-    test_df.to_csv("test.csv", index=None) # type:ignore
+    train_df.to_csv("train.csv", index=None)  # type:ignore
+    validation_df.to_csv("validation.csv", index=None)  # type:ignore
+    test_df.to_csv("test.csv", index=None)  # type:ignore
 
 
 # ## SpamDataset
@@ -121,13 +122,17 @@ def save_csv():
 
 
 class SpamDataset(Dataset):
-    def __init__(self, csv_file: Path, tokenizer: tiktoken.Encoding, max_length:int|None=None, pad_token_id:int=50256):
+    def __init__(
+        self,
+        csv_file: Path,
+        tokenizer: tiktoken.Encoding,
+        max_length: int | None = None,
+        pad_token_id: int = 50256,
+    ):
         self.data = pd.read_csv(csv_file)
 
         # Pre-tokenize texts
-        self.encoded_texts = [
-            tokenizer.encode(text) for text in self.data["Text"]
-        ]
+        self.encoded_texts = [tokenizer.encode(text) for text in self.data["Text"]]
 
         if max_length is None:
             self.max_length = self._longest_encoded_length()
@@ -136,8 +141,7 @@ class SpamDataset(Dataset):
 
             # truncate sequences that are longer than max_length
             self.encoded_texts = [
-                encoded_text[:self.max_length]
-                for encoded_text in self.encoded_texts
+                encoded_text[: self.max_length] for encoded_text in self.encoded_texts
             ]
 
         # pad the sequences
@@ -151,7 +155,7 @@ class SpamDataset(Dataset):
         label = self.data.iloc[idx]["Label"]
         return (
             torch.tensor(encoded, dtype=torch.long),
-            torch.tensor(label, dtype=torch.long)
+            torch.tensor(label, dtype=torch.long),
         )
 
     def __len__(self):
@@ -179,7 +183,8 @@ class SpamDataset(Dataset):
 class ClassifierGPT(nn.Module):
     """Wraps a SimplifiedGPT model and bases a classification model on it.
     Note that the model argument WILL BE MODIFIED."""
-    def __init__(self, model: gpt.GPTModel, classifications:int):
+
+    def __init__(self, model: gpt.GPTModel, classifications: int):
         super().__init__()
         self.model = model
         cfg = model.cfg
@@ -219,7 +224,13 @@ def spam_dataloaders() -> tuple[DataLoader, DataLoader, DataLoader]:
     # Create the DataLoaders from the datasets
     num_workers = 0
     batch_size = 8
-    custom_dataloader = partial(DataLoader, batch_size=batch_size, shuffle=True, num_workers=num_workers, drop_last=True)
+    custom_dataloader = partial(
+        DataLoader,
+        batch_size=batch_size,
+        shuffle=True,
+        num_workers=num_workers,
+        drop_last=True,
+    )
 
     train_loader = custom_dataloader(dataset=train_dataset)
     val_loader = custom_dataloader(dataset=val_dataset)
@@ -231,7 +242,12 @@ def spam_dataloaders() -> tuple[DataLoader, DataLoader, DataLoader]:
 # In[9]:
 
 
-def calc_accuracy_loader(dataloader: DataLoader, model: ClassifierGPT, device: torch.device, num_batches:int|None=None) -> float:
+def calc_accuracy_loader(
+    dataloader: DataLoader,
+    model: ClassifierGPT,
+    device: torch.device,
+    num_batches: int | None = None,
+) -> float:
     model.eval()
     correct_predictions, num_examples = 0, 0
 
@@ -257,7 +273,12 @@ def calc_accuracy_loader(dataloader: DataLoader, model: ClassifierGPT, device: t
 # In[10]:
 
 
-def calc_loss_batch(input_batch: torch.Tensor, target_batch: torch.Tensor, model: ClassifierGPT, device: torch.device) -> torch.Tensor:
+def calc_loss_batch(
+    input_batch: torch.Tensor,
+    target_batch: torch.Tensor,
+    model: ClassifierGPT,
+    device: torch.device,
+) -> torch.Tensor:
     input_batch, target_batch = input_batch.to(device), target_batch.to(device)
     logits = model(input_batch)[:, -1, :]
     loss = nn.functional.cross_entropy(logits, target_batch)
@@ -267,8 +288,13 @@ def calc_loss_batch(input_batch: torch.Tensor, target_batch: torch.Tensor, model
 # In[11]:
 
 
-def calc_loss_loader(dataloader: DataLoader, model: ClassifierGPT, device: torch.device, num_batches:int|None=None) -> float:
-    total_loss = 0.
+def calc_loss_loader(
+    dataloader: DataLoader,
+    model: ClassifierGPT,
+    device: torch.device,
+    num_batches: int | None = None,
+) -> float:
+    total_loss = 0.0
     if len(dataloader) == 0:
         return float("nan")
     elif num_batches is None:
@@ -287,10 +313,18 @@ def calc_loss_loader(dataloader: DataLoader, model: ClassifierGPT, device: torch
 # In[12]:
 
 
-def evaluate_model(model: ClassifierGPT, train_loader: DataLoader, val_loader: DataLoader, device: torch.device, eval_iter:int):
+def evaluate_model(
+    model: ClassifierGPT,
+    train_loader: DataLoader,
+    val_loader: DataLoader,
+    device: torch.device,
+    eval_iter: int,
+):
     model.eval()
     with torch.no_grad():
-        train_loss = calc_loss_loader(train_loader, model, device, num_batches=eval_iter)
+        train_loss = calc_loss_loader(
+            train_loader, model, device, num_batches=eval_iter
+        )
         val_loss = calc_loss_loader(val_loader, model, device, num_batches=eval_iter)
     model.train()
     return train_loss, val_loss
@@ -299,7 +333,16 @@ def evaluate_model(model: ClassifierGPT, train_loader: DataLoader, val_loader: D
 # In[13]:
 
 
-def train_classifier_simple(model: ClassifierGPT, train_loader: DataLoader, val_loader: DataLoader, optimizer, device: torch.device, num_epochs:int, eval_freq:int, eval_iter:int):
+def train_classifier_simple(
+    model: ClassifierGPT,
+    train_loader: DataLoader,
+    val_loader: DataLoader,
+    optimizer,
+    device: torch.device,
+    num_epochs: int,
+    eval_freq: int,
+    eval_iter: int,
+):
     train_losses, val_losses, train_accs, val_accs = [], [], [], []
     examples_seen, global_step = 0, -1
 
@@ -315,16 +358,24 @@ def train_classifier_simple(model: ClassifierGPT, train_loader: DataLoader, val_
             global_step += 1
 
             if global_step % eval_freq == 0:
-                train_loss, val_loss = evaluate_model(model, train_loader, val_loader, device, eval_iter)
+                train_loss, val_loss = evaluate_model(
+                    model, train_loader, val_loader, device, eval_iter
+                )
                 train_losses.append(train_loss)
                 val_losses.append(val_loss)
-                print(f"Ep {epoch+1} (Step {global_step:06d}): "
-                      f"Train loss {train_loss:.3f}, Val loss {val_loss:.3f}")
+                print(
+                    f"Ep {epoch + 1} (Step {global_step:06d}): "
+                    f"Train loss {train_loss:.3f}, Val loss {val_loss:.3f}"
+                )
 
-        train_accuracy = calc_accuracy_loader(train_loader, model, device, num_batches=eval_iter)
-        val_accuracy = calc_accuracy_loader(val_loader, model, device, num_batches=eval_iter)
-        print(f"Training accuracy: {train_accuracy*100:.2f}% | ", end ="")
-        print(f"Validation accuracy: {val_accuracy*100:.2f}%")
+        train_accuracy = calc_accuracy_loader(
+            train_loader, model, device, num_batches=eval_iter
+        )
+        val_accuracy = calc_accuracy_loader(
+            val_loader, model, device, num_batches=eval_iter
+        )
+        print(f"Training accuracy: {train_accuracy * 100:.2f}% | ", end="")
+        print(f"Validation accuracy: {val_accuracy * 100:.2f}%")
         train_accs.append(train_accuracy)
         val_accs.append(val_accuracy)
 
@@ -334,15 +385,22 @@ def train_classifier_simple(model: ClassifierGPT, train_loader: DataLoader, val_
 # In[14]:
 
 
-def classify(text: str, model: ClassifierGPT, tokenizer: tiktoken.Encoding, device: torch.device, max_length:int=0, pad_token_id:int=50256) -> str:
+def classify(
+    text: str,
+    model: ClassifierGPT,
+    tokenizer: tiktoken.Encoding,
+    device: torch.device,
+    max_length: int = 0,
+    pad_token_id: int = 50256,
+) -> str:
     model.eval()
     input_ids = tokenizer.encode(text)
-    supported_context_length = model.model.cfg['context_length']
+    supported_context_length = model.model.cfg["context_length"]
     if max_length == 0:
         max_length = supported_context_length
 
     # truncate if too long
-    input_ids = input_ids[:min(max_length, supported_context_length)]
+    input_ids = input_ids[: min(max_length, supported_context_length)]
     # pad if too short
     input_ids += [pad_token_id] * (max_length - len(input_ids))
     input_tensor = torch.tensor(input_ids, device=device, dtype=torch.long).unsqueeze(0)
@@ -365,23 +423,24 @@ class SpamExample(training.ExampleGenerator):
 
     def generate(self, model: gpt.GPTModel) -> str:
         classification = classify(self.msg, model, self.tokenizer, self.device)
-        return f"{classification}: \"{self.msg}\""
+        return f'{classification}: "{self.msg}"'
+
 
 def train_classifier(
-        model: ClassifierGPT,
-        train_loader: DataLoader,
-        val_loader: DataLoader,
-        optimizer: optim.Optimizer,
-        device: torch.device,
-        num_epochs: int,
-        eval_freq: int,
-        eval_iter: int
-    ):
+    model: ClassifierGPT,
+    train_loader: DataLoader,
+    val_loader: DataLoader,
+    optimizer: optim.Optimizer,
+    device: torch.device,
+    num_epochs: int,
+    eval_freq: int,
+    eval_iter: int,
+):
     model.to(device)
     cfg = training.new_training_config(
         epochs=num_epochs,
         eval_freq=eval_freq,
-        max_validation_batches=eval_iter, # I think?
+        max_validation_batches=eval_iter,  # I think?
         peak_lr=5e-5,
         weight_decay=0.1,
         classification=True,
@@ -393,37 +452,53 @@ def train_classifier(
         validation_loader=val_loader,
         cfg=cfg,
         metrics=training.StdoutMetrics(print_interval=100),
-        example_generator=SpamExample(device)
+        example_generator=SpamExample(device),
     )
 
 
 # In[16]:
 
 
-def model_accuracy(model: ClassifierGPT, train_loader: DataLoader, val_loader: DataLoader, test_loader: DataLoader, device: torch.device):
+def model_accuracy(
+    model: ClassifierGPT,
+    train_loader: DataLoader,
+    val_loader: DataLoader,
+    test_loader: DataLoader,
+    device: torch.device,
+):
     train_accuracy = calc_accuracy_loader(train_loader, model, device)
     val_accuracy = calc_accuracy_loader(val_loader, model, device)
     test_accuracy = calc_accuracy_loader(test_loader, model, device)
 
-    print(f"Training accuracy: {train_accuracy*100:.2f}%")
-    print(f"Validation accuracy: {val_accuracy*100:.2f}%")
-    print(f"Test accuracy: {test_accuracy*100:.2f}%")
+    print(f"Training accuracy: {train_accuracy * 100:.2f}%")
+    print(f"Validation accuracy: {val_accuracy * 100:.2f}%")
+    print(f"Test accuracy: {test_accuracy * 100:.2f}%")
 
 
 # In[18]:
 
 
-def training_run(model: ClassifierGPT, train_loader: DataLoader, val_loader: DataLoader):
+def training_run(
+    model: ClassifierGPT, train_loader: DataLoader, val_loader: DataLoader
+):
     start_time = time.time()
     torch.manual_seed(123)
     optimizer = optim.AdamW(model.parameters(), lr=5e-5, weight_decay=0.1)
     num_epochs = 5
     train_classifier(
-        model, train_loader, val_loader, optimizer, get_device(), num_epochs=num_epochs, eval_freq=50, eval_iter=5,
+        model,
+        train_loader,
+        val_loader,
+        optimizer,
+        get_device(),
+        num_epochs=num_epochs,
+        eval_freq=50,
+        eval_iter=5,
     )
     end_time = time.time()
     execution_time_minutes = (end_time - start_time) / 60
     print(f"Training completed in {execution_time_minutes:.2f} minutes.")
+
 
 tokenizer = tiktoken.get_encoding("gpt2")
 
@@ -434,7 +509,9 @@ if __name__ == "__main__":
     training_run(clas, train_loader, val_loader)
 
     # model_accuracy(clas, train_loader, val_loader, test_loader, get_device())
-    max_length = 120 # the maximum length (in tokens) of the texts in the training loader
+    max_length = (
+        120  # the maximum length (in tokens) of the texts in the training loader
+    )
     sample = "hey dude, I promise this isn't spam."
     classify(sample, clas, tokenizer, get_device(), max_length=max_length)
 

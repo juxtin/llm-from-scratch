@@ -21,12 +21,11 @@
 
 import torch
 import import_ipynb
-import training # type: ignore
-import openai # type: ignore
-import gpt # type: ignore
-import chat # type: ignore
+import training  # type: ignore
+import openai  # type: ignore
+import gpt  # type: ignore
+import chat  # type: ignore
 import coremltools as ct
-import tiktoken
 import numpy as np
 
 
@@ -41,11 +40,13 @@ import numpy as np
 # (Note: I'm not distributing the `.pth` file for this one, so don't expect this to run on a fresh clone. You'll need
 # your own model, which you can create in [chat.ipynb](./chat.ipynb).)
 
-# In[3]:
+# In[ ]:
 
 
 model = gpt.GPTModel(openai.GPT_CONFIG_355M)
-training.load(model, optimizer=None, name="fine-tuned-355m-alpaca", device='cpu')
+training.load(
+    model, optimizer=None, name="355M-alpaca", base_path="../models", device="cpu"
+)
 model.to(gpt.get_device())
 chat.instruct(model, "Tell the user that it was successful.")
 
@@ -94,7 +95,7 @@ cml_model = ct.convert(
     convert_to="mlprogram",
     inputs=[
         ct.TensorType(shape=[1, ct.RangeDim(1, 1024)], dtype=np.float32, name="in_idx")
-    ]
+    ],
 )
 cml_model.save("Chatmodel.mlpackage")
 

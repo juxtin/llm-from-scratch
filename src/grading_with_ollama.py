@@ -25,12 +25,12 @@ import tqdm
 
 # this is almost the same as the one defined in chat.ipynb, but it has model_output as well.
 class InstructionExampleResponse(TypedDict):
-    instruction: str      # A description of the task to be performed
-    input: str            # Optional parameter for the task
-    output: str           # The expected result of performing the task
-    model_output: str     # The actual result of performing the task
-    assessment: str|None  # The assessment provided by the judge LLM, if any
-    score: int|None       # The score assigned by the judge LLM, if any
+    instruction: str  # A description of the task to be performed
+    input: str  # Optional parameter for the task
+    output: str  # The expected result of performing the task
+    model_output: str  # The actual result of performing the task
+    assessment: str | None  # The assessment provided by the judge LLM, if any
+    score: int | None  # The score assigned by the judge LLM, if any
 
 
 # In[8]:
@@ -44,11 +44,10 @@ def check_if_running(process_name: str):
             break
     return running
 
+
 ollama_running = check_if_running("ollama")
 if not ollama_running:
-    raise RuntimeError(
-        "Ollama is not running. Launch ollama before proceeding."
-    )
+    raise RuntimeError("Ollama is not running. Launch ollama before proceeding.")
 
 print("Ollama is running.")
 
@@ -57,28 +56,18 @@ print("Ollama is running.")
 
 
 def query_model(
-        prompt: str,
-        model:str="qwen3:4b",
-        url:str="http://localhost:11434/api/chat",
+    prompt: str,
+    model: str = "qwen3:4b",
+    url: str = "http://localhost:11434/api/chat",
 ) -> str:
     data = {
         "model": model,
-        "messages": [
-            {"role": "user", "content": prompt}
-        ],
-        "options": {
-            "seed": 123,
-            "temperature": 0,
-            "num_ctx": 2048
-        }
+        "messages": [{"role": "user", "content": prompt}],
+        "options": {"seed": 123, "temperature": 0, "num_ctx": 2048},
     }
 
     payload = json.dumps(data).encode("utf-8")
-    request = urllib.request.Request(
-        url,
-        data=payload,
-        method="POST"
-    )
+    request = urllib.request.Request(url, data=payload, method="POST")
     request.add_header("Content-Type", "application/json")
 
     response_data = ""
@@ -114,10 +103,12 @@ def response_to_score(response: str) -> int:
         print(response)
         return 0
 
+
 def judge_example(example: InstructionExampleResponse) -> InstructionExampleResponse:
-    preface = ("Below you'll find the output from a new LLM. Please "
-        "evaluate the quality of the \"model_output\" compared to the reference "
-        "\"output\". Explain the rationale for your judgment, then end with a new line "
+    preface = (
+        "Below you'll find the output from a new LLM. Please "
+        'evaluate the quality of the "model_output" compared to the reference '
+        '"output". Explain the rationale for your judgment, then end with a new line '
         "containing only an integer score out of 100. The final line should contain only "
         "a single integer. Factually incorrect responses must be scored below 50, with higher scores indicating that the answer is close to the truth. \n"
         "Ungrammatical responses must be scored below 50, with lower scores indicating nonsense.\n"
@@ -131,21 +122,22 @@ def judge_example(example: InstructionExampleResponse) -> InstructionExampleResp
         "A valid score looks like:\n85\n\n"
         "An invalid score looks like:\n**100**\n"
         "or:\nScore: 100 out of 100\n"
-        'or: \\box{100}\n\n'
-        "Result to evaluate:\n")
+        "or: \\box{100}\n\n"
+        "Result to evaluate:\n"
+    )
     prompt = preface + json.dumps(example)
     response = query_model(prompt)
     score = response_to_score(response)
     result = example.copy()
-    result['assessment'] = response
-    result['score'] = score
+    result["assessment"] = response
+    result["score"] = score
     return result
 
 
 # In[11]:
 
 
-with open('pg19_774M_responses.json', 'r') as f:
+with open("pg19_774M_responses.json", "r") as f:
     examples = json.load(f)
 
 examples[1]
@@ -155,10 +147,10 @@ judge_example(examples[45])
 # In[12]:
 
 
-def score_examples(examples: list[InstructionExampleResponse], out_path:str):
+def score_examples(examples: list[InstructionExampleResponse], out_path: str):
     for example in tqdm.tqdm(examples, desc="Scoring examples"):
         result = judge_example(example)
-        with open(out_path, 'a') as f:
+        with open(out_path, "a") as f:
             f.write(json.dumps(result))
             f.write("\n")
 
@@ -166,17 +158,17 @@ def score_examples(examples: list[InstructionExampleResponse], out_path:str):
 # In[13]:
 
 
-score_examples(examples, 'graded_pg19_774M_responses.lsv')
+score_examples(examples, "graded_pg19_774M_responses.lsv")
 
 
 # In[14]:
 
 
 def average_score(tsv_file: str):
-    with open(tsv_file, 'r') as f:
+    with open(tsv_file, "r") as f:
         lines = f.readlines()
     results = [json.loads(x) for x in lines]
-    scores = [x['score'] for x in results]
+    scores = [x["score"] for x in results]
     avg = sum(scores) / len(scores)
     return avg
 
@@ -185,28 +177,27 @@ def average_score(tsv_file: str):
 
 
 def scroll_results(tsv_file: str):
-    with open(tsv_file, 'r') as f:
+    with open(tsv_file, "r") as f:
         lines = f.readlines()
     results: list[InstructionExampleResponse] = [json.loads(x) for x in lines]
     for result in results:
         print(f"Instruction: {result['instruction']}")
-        print(f"Input: {result['input']}") if result['input'] else None
+        print(f"Input: {result['input']}") if result["input"] else None
         print(f"Output: {result['model_output']}")
         print(f"Score: {result['score']}")
         print("-------------")
 
 
-
 # In[ ]:
 
 
-scroll_results('graded_small_training.lsv')
+scroll_results("graded_small_training.lsv")
 
 
 # In[33]:
 
 
-scroll_results('graded_355m_alpaca.lsv')
+scroll_results("graded_355m_alpaca.lsv")
 
 
 # # pg19 774M Alpaca
@@ -256,7 +247,7 @@ scroll_results('graded_355m_alpaca.lsv')
 # In[17]:
 
 
-scroll_results('graded_pg19_774M_responses.lsv')
+scroll_results("graded_pg19_774M_responses.lsv")
 
 
 # In[ ]:

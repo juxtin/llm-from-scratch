@@ -21,10 +21,10 @@
 
 
 import import_ipynb
-import gpt # type: ignore
-from gpt import GPTModel # type: ignore
-from training import TrainingConfig, new_training_config, train # type: ignore
-import training # type: ignore
+import gpt  # type: ignore
+from gpt import GPTModel  # type: ignore
+from training import TrainingConfig, new_training_config, train  # type: ignore
+import training  # type: ignore
 import re
 import glob
 from pathlib import Path
@@ -47,11 +47,12 @@ class LazyTokenDatasetPG19(Dataset):
     but after that it's just a few seconds.
 
     The initialized object is suitable for passing to Dataloader."""
+
     GUTENBERG_END_RE = re.compile(r"(?i)end of (the )?project gutenberg.*", re.DOTALL)
     TOO_MANY_NEWLINES_RE = re.compile(r"\n{3,}")
     LEADING_NEWLINES_RE = re.compile(r"^\n+")
 
-    def __init__(self, context_len:int=256):
+    def __init__(self, context_len: int = 256):
         super().__init__()
         self.context_len = context_len
         self.preprocess()
@@ -79,7 +80,9 @@ class LazyTokenDatasetPG19(Dataset):
     def preprocess(self):
         os.makedirs("tokens", exist_ok=True)
         existing_filepaths = glob.glob("tokens/book_*.pt")
-        if len(existing_filepaths) >= 28_000: # the approx size of the expanded tokens dir
+        if (
+            len(existing_filepaths) >= 28_000
+        ):  # the approx size of the expanded tokens dir
             print("Preprocessing not needed.")
             return
         ds = load_dataset("deepmind/pg19", split="train")
@@ -89,7 +92,7 @@ class LazyTokenDatasetPG19(Dataset):
             path = Path(f"tokens/book_{i}.pt")
             if path.exists():
                 continue
-            text = self.clean_text(book['text'])
+            text = self.clean_text(book["text"])
             if len(text) < self.context_len + 1:
                 continue
             tokens = tokenizer.encode(text)
@@ -105,11 +108,11 @@ class LazyTokenDatasetPG19(Dataset):
         # Collapse 3+ newlines into exactly 2 (paragraph break)
         text = self.TOO_MANY_NEWLINES_RE.sub("\n\n", text)
         # Eliminate chapter:verse markings
-        text = re.sub(r'\b\d+:\d+\b', '', text)
+        text = re.sub(r"\b\d+:\d+\b", "", text)
         # Unwrap lines in each paragraph, but preserve paragraphs
-        paragraphs = text.split('\n\n')
+        paragraphs = text.split("\n\n")
         unwrapped_paragraphs = [re.sub(r"\n", " ", p) for p in paragraphs]
-        text = '\n\n'.join(unwrapped_paragraphs)
+        text = "\n\n".join(unwrapped_paragraphs)
         # don't allow multiple spaces in a row
         text = re.sub(r"[^\S\n]+", " ", text)
         return text.strip()
@@ -130,6 +133,7 @@ def sample_loader(dataloader, n):
         print(text)
         print("----------------------------------------")
 
+
 # Uncomment below to see what's in the sanitized pg19 dataset.
 # sample_loader(DataLoader(ltds, shuffle=True)
 
@@ -137,13 +141,16 @@ def sample_loader(dataloader, n):
 # In[4]:
 
 
-GPT_CONFIG_MEDIUM: gpt.GPTConfigDict = {**gpt.GPT_CONFIG_124M, "context_length": 512} # 1024 is just too big to train locally
+GPT_CONFIG_MEDIUM: gpt.GPTConfigDict = {
+    **gpt.GPT_CONFIG_124M,
+    "context_length": 512,
+}  # 1024 is just too big to train locally
 GPT_CONFIG_LARGE: gpt.GPTConfigDict = {**openai.GPT_CONFIG_774M, "context_length": 512}
 ltds = LazyTokenDatasetPG19(context_len=512)
 training_cfg: TrainingConfig = new_training_config(
     epochs=1,
     eval_freq=500,
-    peak_lr=1.5e-3, # 1.5e-3 for 774M, 1e-3 for 355M
+    peak_lr=1.5e-3,  # 1.5e-3 for 774M, 1e-3 for 355M
     max_length=512,
     # max_validation_batches=4,
 )
@@ -156,14 +163,16 @@ optimizer = training.default_optimizer(model, training_cfg)
 # In[ ]:
 
 
-def train_pg19(name: str, dataset: Dataset = ltds, force_refresh:bool=False):
-    with open('walden.txt') as f:
+def train_pg19(name: str, dataset: Dataset = ltds, force_refresh: bool = False):
+    with open("walden.txt") as f:
         walden_txt = f.read()
-    walden_ds = training.GPTDatasetV1(walden_txt, tokenizer=tiktoken.get_encoding("gpt2"), max_length=512, stride=256)
+    walden_ds = training.GPTDatasetV1(
+        walden_txt, tokenizer=tiktoken.get_encoding("gpt2"), max_length=512, stride=256
+    )
     if force_refresh:
         training.load(model, optimizer, name)
 
-    batch_size=12
+    batch_size = 12
     training_loader = DataLoader(
         dataset,
         shuffle=True,
@@ -171,7 +180,7 @@ def train_pg19(name: str, dataset: Dataset = ltds, force_refresh:bool=False):
         drop_last=True,
     )
     validation_loader = DataLoader(
-        walden_ds, # type: ignore
+        walden_ds,  # type: ignore
         shuffle=True,
         batch_size=4,
         drop_last=True,
@@ -184,20 +193,23 @@ def train_pg19(name: str, dataset: Dataset = ltds, force_refresh:bool=False):
         validation_loader=validation_loader,
         cfg=training_cfg,
         metrics=training.MLflowMetrics(),
-        example_generator=training.SimpleCompletion(prompt="John held up his hands and", max_new_tokens=24, temperature=0.4)
+        example_generator=training.SimpleCompletion(
+            prompt="John held up his hands and", max_new_tokens=24, temperature=0.4
+        ),
     )
+
 
 # Uncomment below to actually train the model. You won't get good results until you do.
 # training.load(model, optimizer, "pg19_medium")
 training.load(model, optimizer, name="pg19_755M_partial", base_path="/workspace")
-training_cfg['gradient_clipping'] = True
+training_cfg["gradient_clipping"] = True
 train_pg19("new_training_run")
 
 
 # In[ ]:
 
 
-def prompt(model: GPTModel, txt:str, max_tokens=128, temperature=0.8):
+def prompt(model: GPTModel, txt: str, max_tokens=128, temperature=0.8):
     result = model.prompt(txt, max_tokens=max_tokens, temperature=temperature)
     print(textwrap.fill(result, width=120))
 

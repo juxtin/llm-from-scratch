@@ -11,7 +11,7 @@
 
 
 import import_ipynb
-import gpt # type: ignore
+import gpt  # type: ignore
 from torch.utils.data import Dataset, DataLoader
 import math
 import mlflow
@@ -31,6 +31,7 @@ from abc import ABC, abstractmethod
 
 tokenizer = tiktoken.get_encoding("gpt2")
 
+
 def get_device() -> torch.device:
     if cuda.is_available():
         return torch.device("cuda")
@@ -39,9 +40,11 @@ def get_device() -> torch.device:
     else:
         return torch.device("cpu")
 
-os.environ['CUDA_LAUNCH_BLOCKING'] = "1"
-os.environ['CUBLAS_WORKSPACE_CONFIG'] = ":4096:8"
-os.environ['PYTORCH_CUDA_ALLOC_CONF'] = "expandable_segments:True"
+
+os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
+os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+
 
 def clear_cache():
     if torch.cuda.is_available():
@@ -77,21 +80,25 @@ GPT_CONFIG_MINI: gpt.GPTConfigDict = {**gpt.GPT_CONFIG_124M, "context_length": 2
 # In[3]:
 
 
-def text_to_token_ids(text: str, tokenizer: tiktoken.Encoding, device:torch.device=get_device()) -> torch.Tensor:
-    encoded = tokenizer.encode(text, allowed_special={'<|endoftext|>'})
-    encoded_tensor = torch.tensor(encoded).unsqueeze(0) # add batch dimension
+def text_to_token_ids(
+    text: str, tokenizer: tiktoken.Encoding, device: torch.device = get_device()
+) -> torch.Tensor:
+    encoded = tokenizer.encode(text, allowed_special={"<|endoftext|>"})
+    encoded_tensor = torch.tensor(encoded).unsqueeze(0)  # add batch dimension
     return encoded_tensor.to(device)
 
+
 def token_ids_to_text(token_ids: torch.Tensor, tokenizer: tiktoken.Encoding) -> str:
-    flat = token_ids.squeeze(0) # remove batch dimension
+    flat = token_ids.squeeze(0)  # remove batch dimension
     return tokenizer.decode(flat.tolist())
 
+
 # example:
-def untrained_example(start_context:str="Every effort moves you"):
+def untrained_example(start_context: str = "Every effort moves you"):
     torch.manual_seed(123)
     model = gpt.GPTModel(GPT_CONFIG_MINI)
     model.to(get_device())
-    model.eval(); # disables dropout and gradients
+    model.eval()  # disables dropout and gradients
     tokenizer = tiktoken.get_encoding("gpt2")
 
     token_ids = gpt.generate_text_simple(
@@ -102,6 +109,7 @@ def untrained_example(start_context:str="Every effort moves you"):
     )
 
     print("Output text (untrained):\n", token_ids_to_text(token_ids, tokenizer))
+
 
 if __name__ == "__main__":
     untrained_example()
@@ -122,7 +130,9 @@ if __name__ == "__main__":
 
 
 class GPTDatasetV1(Dataset):
-    def __init__(self, text: str, tokenizer: tiktoken.Encoding, max_length: int, stride: int):
+    def __init__(
+        self, text: str, tokenizer: tiktoken.Encoding, max_length: int, stride: int
+    ):
         self.input_ids = []
         self.target_ids = []
 
@@ -132,7 +142,7 @@ class GPTDatasetV1(Dataset):
             start = i
             end = start + max_length
             input_chunk = token_ids[start:end]
-            target_chunk = token_ids[start+1:end+1]
+            target_chunk = token_ids[start + 1 : end + 1]
             self.input_ids.append(torch.tensor(input_chunk))
             self.target_ids.append(torch.tensor(target_chunk))
 
@@ -171,34 +181,39 @@ class GPTDatasetV1(Dataset):
 
 
 class TrainingConfig(TypedDict):
-    train_percent: float                   # If the training corpus is text, the percentage to use for training. The rest is used for validation.
-    max_length: int                        # the maximum length of a given training batch
-    stride: int                            # the distance between starting points of training batches
-    epochs: int                            # the number of times to train on one set of data
-    initial_lr: float                      # the initial learning rate used by the optimizer
-    peak_lr: float                         # the highest learning rate to be used by the optimizer
-    weight_decay: float                    # the weight decay used by the optimizer
-    gradient_clipping: bool                # whether to force gradient norms down to after every step 1.0
-    temperature: float                     # the temperature for token generation
-    topk: int                              # the number of logits to select for top-k token generation
-    eval_freq: int                         # evaluate the model every [this number] of steps
-    max_validation_batches: Optional[int]  # the maximum number of batches to use for validation
-    classification: bool                   # allows the model to run in classification mode. If false, assumes completion mode.
+    train_percent: float  # If the training corpus is text, the percentage to use for training. The rest is used for validation.
+    max_length: int  # the maximum length of a given training batch
+    stride: int  # the distance between starting points of training batches
+    epochs: int  # the number of times to train on one set of data
+    initial_lr: float  # the initial learning rate used by the optimizer
+    peak_lr: float  # the highest learning rate to be used by the optimizer
+    weight_decay: float  # the weight decay used by the optimizer
+    gradient_clipping: (
+        bool  # whether to force gradient norms down to after every step 1.0
+    )
+    temperature: float  # the temperature for token generation
+    topk: int  # the number of logits to select for top-k token generation
+    eval_freq: int  # evaluate the model every [this number] of steps
+    max_validation_batches: Optional[
+        int
+    ]  # the maximum number of batches to use for validation
+    classification: bool  # allows the model to run in classification mode. If false, assumes completion mode.
+
 
 def new_training_config(
-        train_percent:float=0.9,
-        max_length:int=1024,
-        stride:Optional[int]=None,
-        epochs:int=1,
-        initial_lr:float=0.0001,
-        peak_lr:float=0.01,
-        weight_decay:float=0.1,
-        gradient_clipping:bool=False,
-        temperature:float=0.8,
-        topk:int=50,
-        eval_freq:int=0,
-        max_validation_batches:Optional[int]=None,
-        classification:bool=False,
+    train_percent: float = 0.9,
+    max_length: int = 1024,
+    stride: Optional[int] = None,
+    epochs: int = 1,
+    initial_lr: float = 0.0001,
+    peak_lr: float = 0.01,
+    weight_decay: float = 0.1,
+    gradient_clipping: bool = False,
+    temperature: float = 0.8,
+    topk: int = 50,
+    eval_freq: int = 0,
+    max_validation_batches: Optional[int] = None,
+    classification: bool = False,
 ) -> TrainingConfig:
     if stride is None:
         stride = max_length // 2
@@ -258,20 +273,30 @@ def the_verdict() -> str:
     if not file_path.exists():
         url = "https://raw.githubusercontent.com/rasbt/LLMs-from-scratch/main/ch02/01_main-chapter-code/the-verdict.txt"
         with urllib.request.urlopen(url) as response:
-            text_data = response.read().decode('utf-8')
+            text_data = response.read().decode("utf-8")
             with open(file_path, "w") as f:
                 f.write(text_data)
             return text_data
     with open(file_path, "r") as f:
         return f.read()
 
-def text_training_loaders(text: str, cfg: TrainingConfig) -> tuple[DataLoader, DataLoader]:
+
+def text_training_loaders(
+    text: str, cfg: TrainingConfig
+) -> tuple[DataLoader, DataLoader]:
     """Turn the given text into two Dataloaders: one for training and one for validation."""
-    split_idx = int(len(text) * cfg['train_percent'])
+    split_idx = int(len(text) * cfg["train_percent"])
 
     # Use partials with the Dataset and Dataloader classes to declutter and enforce consistency
-    custom_dataset = partial(GPTDatasetV1, tokenizer=tokenizer, max_length=cfg['max_length'], stride=cfg['stride'])
-    custom_dataloader = partial(DataLoader, batch_size=4, shuffle=True, drop_last=True, num_workers=0)
+    custom_dataset = partial(
+        GPTDatasetV1,
+        tokenizer=tokenizer,
+        max_length=cfg["max_length"],
+        stride=cfg["stride"],
+    )
+    custom_dataloader = partial(
+        DataLoader, batch_size=4, shuffle=True, drop_last=True, num_workers=0
+    )
 
     # raw text portions
     train_portion = text[:split_idx]
@@ -286,7 +311,13 @@ def text_training_loaders(text: str, cfg: TrainingConfig) -> tuple[DataLoader, D
     validation_loader = custom_dataloader(validation_dataset)
     return (train_loader, validation_loader)
 
-def cross_entropy_loss_for_batch(model: gpt.GPTModel, input_batch: torch.Tensor, target_batch: torch.Tensor, classification: bool = False) -> torch.Tensor:
+
+def cross_entropy_loss_for_batch(
+    model: gpt.GPTModel,
+    input_batch: torch.Tensor,
+    target_batch: torch.Tensor,
+    classification: bool = False,
+) -> torch.Tensor:
     """Returns the model's loss for the given batch. The loss can be used to train the model.
     Supports classification and completion modes. Usually, you want completion (classification=False)."""
     device = model.device()
@@ -296,9 +327,17 @@ def cross_entropy_loss_for_batch(model: gpt.GPTModel, input_batch: torch.Tensor,
         logits = logits[:, -1, :]
         return nn.functional.cross_entropy(logits, target_batch)
     else:
-        return nn.functional.cross_entropy(logits.flatten(0, 1), target_batch.flatten()) # TODO: explain why flatten
+        return nn.functional.cross_entropy(
+            logits.flatten(0, 1), target_batch.flatten()
+        )  # TODO: explain why flatten
 
-def calc_loss_loader(model: gpt.GPTModel, data_loader: DataLoader, num_batches=None, classification: bool = False) -> float:
+
+def calc_loss_loader(
+    model: gpt.GPTModel,
+    data_loader: DataLoader,
+    num_batches=None,
+    classification: bool = False,
+) -> float:
     """Calculates the model's total loss over a number of batches for the given
     Dataloader. This helper is used for validation only."""
     total_loss = 0
@@ -311,24 +350,29 @@ def calc_loss_loader(model: gpt.GPTModel, data_loader: DataLoader, num_batches=N
 
     for i, (input_batch, target_batch) in enumerate(data_loader):
         if i < num_batches:
-            loss = cross_entropy_loss_for_batch(model, input_batch, target_batch, classification=classification)
+            loss = cross_entropy_loss_for_batch(
+                model, input_batch, target_batch, classification=classification
+            )
             total_loss += loss.item()
         else:
             break
 
     return total_loss / num_batches
 
+
 def train_simple_text(model: gpt.GPTModel, text: str, cfg: TrainingConfig) -> float:
     optimizer = optim.AdamW(
-        model.parameters(), lr=cfg['peak_lr'], weight_decay=cfg['weight_decay']
+        model.parameters(), lr=cfg["peak_lr"], weight_decay=cfg["weight_decay"]
     )
     training_loader, validation_loader = text_training_loaders(text, cfg)
 
-    for epoch in range(cfg['epochs']):
+    for epoch in range(cfg["epochs"]):
         model.train()
         for input_batch, target_batch in training_loader:
             optimizer.zero_grad()
-            loss = cross_entropy_loss_for_batch(model, input_batch=input_batch, target_batch=target_batch)
+            loss = cross_entropy_loss_for_batch(
+                model, input_batch=input_batch, target_batch=target_batch
+            )
             loss.backward()
             optimizer.step()
 
@@ -339,10 +383,13 @@ def train_simple_text(model: gpt.GPTModel, text: str, cfg: TrainingConfig) -> fl
         validation_loss = calc_loss_loader(model, validation_loader)
         return validation_loss
 
+
 def train_verdict(model: gpt.GPTModel) -> float:
     torch.manual_seed(123)
     text = the_verdict()
-    verdict_training_config = new_training_config(train_percent=0.85, peak_lr=5e-4, max_length=256, epochs=10)
+    verdict_training_config = new_training_config(
+        train_percent=0.85, peak_lr=5e-4, max_length=256, epochs=10
+    )
     return train_simple_text(model=model, text=text, cfg=verdict_training_config)
 
 
@@ -372,6 +419,7 @@ def trained_example(model: gpt.GPTModel, start_context):
 
     print("Output text (trained):\n", token_ids_to_text(token_ids, tokenizer))
 
+
 if __name__ == "__main__":
     start_context = "He never"
     untrained_example(start_context=start_context)
@@ -398,21 +446,32 @@ if __name__ == "__main__":
 
 END_OF_TEXT = 50256
 
-def choose_from_topk(logits: torch.Tensor, topk: int, temperature: float) -> torch.Tensor:
+
+def choose_from_topk(
+    logits: torch.Tensor, topk: int, temperature: float
+) -> torch.Tensor:
     top_logits, top_pos = torch.topk(logits, topk)
-    filtered = torch.full_like(
-        logits, -torch.inf
-    )
-    filtered.scatter_(dim=1, index=top_pos, src=top_logits) #huh?
+    filtered = torch.full_like(logits, -torch.inf)
+    filtered.scatter_(dim=1, index=top_pos, src=top_logits)  # huh?
     scaled = filtered / temperature
-    probabilities = torch.softmax(scaled, dim=-1) # note: might have trouble with device
+    probabilities = torch.softmax(
+        scaled, dim=-1
+    )  # note: might have trouble with device
     if torch.any(torch.isnan(probabilities)) or torch.any(probabilities < 0):
         print("Bad probabilities:", probabilities)
         print("Logits:", logits)
         raise ValueError("NaNs or invalid values in probabilities")
     return torch.multinomial(probabilities, num_samples=1)
 
-def generate_text_topk(model: gpt.GPTModel, token_ids: torch.Tensor, max_new_tokens: int, context_size: int, topk: int, temperature: float):
+
+def generate_text_topk(
+    model: gpt.GPTModel,
+    token_ids: torch.Tensor,
+    max_new_tokens: int,
+    context_size: int,
+    topk: int,
+    temperature: float,
+):
     for _ in range(max_new_tokens):
         idx_cond = token_ids[:, -context_size:]
         with torch.no_grad():
@@ -424,7 +483,15 @@ def generate_text_topk(model: gpt.GPTModel, token_ids: torch.Tensor, max_new_tok
         token_ids = torch.cat((token_ids, idx_next), dim=1)
     return token_ids
 
-def text_completion_topk(model, initial_context: str, max_new_tokens:int=10, context_size:int=256, topk:int=50, temperature:float=1.5):
+
+def text_completion_topk(
+    model,
+    initial_context: str,
+    max_new_tokens: int = 10,
+    context_size: int = 256,
+    topk: int = 50,
+    temperature: float = 1.5,
+):
     device = model.device()
     encoded = tokenizer.encode(initial_context)
     encoded_tensor = torch.tensor(encoded).unsqueeze(0).to(device)
@@ -459,7 +526,13 @@ if __name__ == "__main__":
 # In[ ]:
 
 
-def save(model: gpt.GPTModel, optimizer: Optional[optim.Optimizer], name: str, overwrite:bool=False, base_path: str = "."):
+def save(
+    model: gpt.GPTModel,
+    optimizer: Optional[optim.Optimizer],
+    name: str,
+    overwrite: bool = False,
+    base_path: str = ".",
+):
     if len(name) == 0:
         raise ValueError("name can't be empty")
     path = Path(f"{base_path}/{name}.pth")
@@ -467,12 +540,22 @@ def save(model: gpt.GPTModel, optimizer: Optional[optim.Optimizer], name: str, o
         raise FileExistsError(f"{path} already exists and overwrite is set to False")
 
     optimizer_state = optimizer.state_dict() if optimizer is not None else None
-    torch.save({
-        "model_state_dict": model.state_dict(),
-        "optimizer_state_dict": optimizer_state,
-    }, path)
+    torch.save(
+        {
+            "model_state_dict": model.state_dict(),
+            "optimizer_state_dict": optimizer_state,
+        },
+        path,
+    )
 
-def load(model: gpt.GPTModel, optimizer: Optional[optim.Optimizer], name: str, base_path: str = ".", device: Optional[torch.device] = None):
+
+def load(
+    model: gpt.GPTModel,
+    optimizer: Optional[optim.Optimizer],
+    name: str,
+    base_path: str = ".",
+    device: Optional[torch.device] = None,
+):
     if len(name) == 0:
         raise ValueError("name can't be empty")
     path = Path(f"{base_path}/{name}.pth")
@@ -483,8 +566,6 @@ def load(model: gpt.GPTModel, optimizer: Optional[optim.Optimizer], name: str, b
     optimizer_state_dict = checkpoint["optimizer_state_dict"]
     if optimizer_state_dict is not None and optimizer is not None:
         optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
-
-
 
 
 # ## Default optimizer
@@ -499,7 +580,7 @@ def load(model: gpt.GPTModel, optimizer: Optional[optim.Optimizer], name: str, b
 
 def default_optimizer(model, cfg: TrainingConfig):
     return optim.AdamW(
-        model.parameters(), lr=cfg['peak_lr'], weight_decay=cfg['weight_decay']
+        model.parameters(), lr=cfg["peak_lr"], weight_decay=cfg["weight_decay"]
     )
 
 
@@ -543,14 +624,18 @@ def default_optimizer(model, cfg: TrainingConfig):
 
 LearningRateFunction = Callable[[int], float]
 
-def cosine_decay_lr(cfg: TrainingConfig, training_loader: DataLoader) -> tuple[LearningRateFunction, int]:
+
+def cosine_decay_lr(
+    cfg: TrainingConfig, training_loader: DataLoader
+) -> tuple[LearningRateFunction, int]:
     """Returns a LambdaLR function that closes over the cfg and implements a basic linear warmup with cosine decay.
     The number of warmup steps is also returned."""
-    total_steps = len(training_loader) * cfg['epochs']
+    total_steps = len(training_loader) * cfg["epochs"]
     warmup_steps = int(0.1 * total_steps)
     warmup_steps = max(warmup_steps, 1)
     decay_steps = total_steps - warmup_steps
     decay_steps = max(decay_steps, 1)
+
     def lambda_lr(step: int) -> float:
         if step < warmup_steps:
             return step / warmup_steps
@@ -558,6 +643,7 @@ def cosine_decay_lr(cfg: TrainingConfig, training_loader: DataLoader) -> tuple[L
             progress = (step - warmup_steps) / decay_steps
             progress = min(progress, 1.0)
             return 0.5 * (1 + math.cos(math.pi * progress))
+
     return (lambda_lr, warmup_steps)
 
 
@@ -609,8 +695,9 @@ class Metrics(ABC):
     def log_example(self, name: str, contents: str, step: int):
         pass
 
+
 class StdoutMetrics(Metrics):
-    def __init__(self, print_interval: int=1):
+    def __init__(self, print_interval: int = 1):
         self.print_interval = print_interval
 
     def error(self, msg: str):
@@ -620,18 +707,23 @@ class StdoutMetrics(Metrics):
         print(f"Training finished successfully: {msg}")
 
     def log_param(self, name: str, val):
-        print(f"Parameter: \"{name}\"={val}")
+        print(f'Parameter: "{name}"={val}')
 
     def log_metric(self, name: str, val, step: int):
         if step % self.print_interval == 0:
-            print(f"[{step}] Metric: \"{name}\"={val}")
+            print(f'[{step}] Metric: "{name}"={val}')
 
     def log_example(self, name: str, contents: str, step: int):
         # I'm going to assume we always want to log these, regardless of the step
-        print(f"[{step}] Example ({name}): \"{contents}\"")
+        print(f'[{step}] Example ({name}): "{contents}"')
+
 
 class MLflowMetrics(Metrics):
-    def __init__(self, tracking_uri: str = "http://localhost:5000", artifact_dir: str = "examples"):
+    def __init__(
+        self,
+        tracking_uri: str = "http://localhost:5000",
+        artifact_dir: str = "examples",
+    ):
         mlflow.set_tracking_uri(tracking_uri)
         os.makedirs(artifact_dir, exist_ok=True)
         self.artifact_dir = artifact_dir
@@ -652,10 +744,12 @@ class MLflowMetrics(Metrics):
         mlflow.log_param(name, val)
 
     def log_metric(self, name: str, val, step: int):
-        mlflow.log_metric(name, val, step = step)
+        mlflow.log_metric(name, val, step=step)
 
     def log_example(self, name: str, contents: str, step: int):
-        mlflow.log_text(contents, artifact_file=f"{self.artifact_dir}/{name}_{step}.txt")
+        mlflow.log_text(
+            contents, artifact_file=f"{self.artifact_dir}/{name}_{step}.txt"
+        )
 
 
 # ### 3. Generating samples
@@ -681,16 +775,17 @@ class ExampleGenerator(ABC):
     def generate(self, model: gpt.GPTModel) -> str:
         pass
 
+
 class SimpleCompletion(ExampleGenerator):
     def __init__(
-            self,
-            prompt: str = "It is good",
-            tokenizer: tiktoken.Encoding = tiktoken.get_encoding("gpt2"),
-            max_new_tokens: int = 10,
-            context_size: int = 128,
-            topk: int = 50,
-            temperature: float = 0.8,
-        ):
+        self,
+        prompt: str = "It is good",
+        tokenizer: tiktoken.Encoding = tiktoken.get_encoding("gpt2"),
+        max_new_tokens: int = 10,
+        context_size: int = 128,
+        topk: int = 50,
+        temperature: float = 0.8,
+    ):
         self.prompt = prompt
         self.tokenizer = tokenizer
         self.max_new_tokens = max_new_tokens
@@ -705,7 +800,7 @@ class SimpleCompletion(ExampleGenerator):
             max_new_tokens=self.max_new_tokens,
             context_size=self.context_size,
             topk=self.topk,
-            temperature=self.temperature
+            temperature=self.temperature,
         )
 
 
@@ -723,15 +818,15 @@ class SimpleCompletion(ExampleGenerator):
 
 
 def train(
-        model: gpt.GPTModel,
-        optimizer: optim.Optimizer,
-        training_loader: DataLoader,
-        validation_loader: Optional[DataLoader],
-        cfg: TrainingConfig,
-        lr_schedule_fn: Optional[LearningRateFunction] = None,
-        metrics: Metrics = StdoutMetrics(print_interval=20),
-        example_generator: ExampleGenerator = SimpleCompletion(),
-        ):
+    model: gpt.GPTModel,
+    optimizer: optim.Optimizer,
+    training_loader: DataLoader,
+    validation_loader: Optional[DataLoader],
+    cfg: TrainingConfig,
+    lr_schedule_fn: Optional[LearningRateFunction] = None,
+    metrics: Metrics = StdoutMetrics(print_interval=20),
+    example_generator: ExampleGenerator = SimpleCompletion(),
+):
     warmup_steps = 1
     if lr_schedule_fn is None:
         lr_schedule_fn, warmup_steps = cosine_decay_lr(cfg, training_loader)
@@ -739,35 +834,43 @@ def train(
 
     tokens_seen = 0
     global_step = 0
-    total_steps = cfg['epochs'] * len(training_loader)
+    total_steps = cfg["epochs"] * len(training_loader)
     loss_val = 0.0
 
     try:
         with metrics.start_run():
             # Initial metrics (job-level params)
             metrics.log_param("epoch size", len(training_loader))
-            metrics.log_param("epochs", cfg['epochs'])
-            metrics.log_param("total training size", len(training_loader) * cfg['epochs'])
+            metrics.log_param("epochs", cfg["epochs"])
+            metrics.log_param(
+                "total training size", len(training_loader) * cfg["epochs"]
+            )
             metrics.log_param("validation size", len(validation_loader or []))
-            metrics.log_param("gradient clipping", cfg['gradient_clipping'])
+            metrics.log_param("gradient clipping", cfg["gradient_clipping"])
 
-            for epoch in range(cfg['epochs']):
+            for epoch in range(cfg["epochs"]):
                 clear_cache()
                 for input_batch, target_batch in training_loader:
                     model.train()
                     optimizer.zero_grad()
 
                     # Actual training
-                    loss = cross_entropy_loss_for_batch(model, input_batch=input_batch, target_batch=target_batch, classification=cfg["classification"])
+                    loss = cross_entropy_loss_for_batch(
+                        model,
+                        input_batch=input_batch,
+                        target_batch=target_batch,
+                        classification=cfg["classification"],
+                    )
                     loss_val = loss.item()
                     loss.backward()
                     tokens_seen += input_batch.numel()
                     global_step += 1
 
                     # Gradient clipping if enabled and not warming up
-                    if cfg['gradient_clipping'] and global_step >= warmup_steps:
-                            nn.utils.clip_grad_norm_(
-                            model.parameters(), max_norm=1.0,
+                    if cfg["gradient_clipping"] and global_step >= warmup_steps:
+                        nn.utils.clip_grad_norm_(
+                            model.parameters(),
+                            max_norm=1.0,
                         )
 
                     optimizer.step()
@@ -775,21 +878,36 @@ def train(
 
                     # Per-batch metrics
                     metrics.log_metric("training loss", loss_val, step=global_step)
-                    metrics.log_metric("learning rate", scheduler.get_last_lr()[0], step=global_step)
+                    metrics.log_metric(
+                        "learning rate", scheduler.get_last_lr()[0], step=global_step
+                    )
                     metrics.log_metric("tokens seen", tokens_seen, step=global_step)
                     metrics.log_metric("epoch", epoch, step=global_step)
-                    metrics.log_metric("progress percent", (global_step / total_steps) * 100, step=global_step)
+                    metrics.log_metric(
+                        "progress percent",
+                        (global_step / total_steps) * 100,
+                        step=global_step,
+                    )
 
                     # Periodic evaluation
-                    if cfg['eval_freq'] > 0 and global_step % cfg['eval_freq'] == 0: # validation_loader not required
+                    if (
+                        cfg["eval_freq"] > 0 and global_step % cfg["eval_freq"] == 0
+                    ):  # validation_loader not required
                         clear_cache()
                         model.eval()
                         with torch.inference_mode():
                             example = example_generator.generate(model)
                             metrics.log_example("example", example, step=global_step)
                             if validation_loader is not None:
-                                validation_loss = calc_loss_loader(model, validation_loader, num_batches=cfg['max_validation_batches'], classification=cfg['classification'])
-                                metrics.log_metric("validation loss", validation_loss, step=global_step)
+                                validation_loss = calc_loss_loader(
+                                    model,
+                                    validation_loader,
+                                    num_batches=cfg["max_validation_batches"],
+                                    classification=cfg["classification"],
+                                )
+                                metrics.log_metric(
+                                    "validation loss", validation_loss, step=global_step
+                                )
                         clear_cache()
             # Final metrics
             metrics.log_metric("tokens seen", tokens_seen, step=global_step)
@@ -797,7 +915,9 @@ def train(
                 clear_cache()
                 model.eval()
                 with torch.inference_mode():
-                    total_validation_loss = calc_loss_loader(model, validation_loader, classification=cfg['classification'])
+                    total_validation_loss = calc_loss_loader(
+                        model, validation_loader, classification=cfg["classification"]
+                    )
                     metrics.finish(f"final validation loss {total_validation_loss:.3f}")
             else:
                 metrics.finish(f"final training loss {loss_val:.3f}")
@@ -815,11 +935,23 @@ if __name__ == "__main__":
     model.to(get_device())
     torch.manual_seed(123)
     text = the_verdict()
-    verdict_training_config = new_training_config(train_percent=0.85, initial_lr=0.0001, peak_lr=0.001, weight_decay=0, max_length=256, epochs=10, eval_freq=20)
-    training_loader, validation_loader = text_training_loaders(text, verdict_training_config)
+    verdict_training_config = new_training_config(
+        train_percent=0.85,
+        initial_lr=0.0001,
+        peak_lr=0.001,
+        weight_decay=0,
+        max_length=256,
+        epochs=10,
+        eval_freq=20,
+    )
+    training_loader, validation_loader = text_training_loaders(
+        text, verdict_training_config
+    )
 
     optimizer = optim.AdamW(
-        model.parameters(), lr=verdict_training_config['peak_lr'], weight_decay=verdict_training_config['weight_decay']
+        model.parameters(),
+        lr=verdict_training_config["peak_lr"],
+        weight_decay=verdict_training_config["weight_decay"],
     )
 
     train(model, optimizer, training_loader, validation_loader, verdict_training_config)

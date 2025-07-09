@@ -49,6 +49,7 @@ class LayerNorm(nn.Module):
         self.epsilon = 1e-5
         self.scale = nn.Parameter(torch.ones(emb_dim))
         self.shift = nn.Parameter(torch.zeros(emb_dim))
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         mean = x.mean(dim=-1, keepdim=True)
         variance = x.var(dim=-1, keepdim=True, unbiased=False) + self.epsilon
@@ -70,10 +71,17 @@ class GELU(nn.Module):
         super().__init__()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return x * 0.5 * (1 + torch.tanh(
-            torch.sqrt(torch.tensor(2.0 / torch.pi)) * 
-            (x + 0.044715 * torch.pow(x, 3))
-        ))
+        return (
+            x
+            * 0.5
+            * (
+                1
+                + torch.tanh(
+                    torch.sqrt(torch.tensor(2.0 / torch.pi))
+                    * (x + 0.044715 * torch.pow(x, 3))
+                )
+            )
+        )
 
 
 # ## 3. GPT_CONFIG_124M
@@ -84,14 +92,16 @@ class GELU(nn.Module):
 
 from typing import TypedDict
 
+
 class GPTConfigDict(TypedDict):
-    vocab_size: int        # the number of tokens in the vocabulary
-    context_length: int    # the maximum number of token vectors to consider at once
-    emb_dim: int           # the width of the token vectors
-    n_heads: int           # the number of heads to use for multi-head attention
-    n_layers: int          # the number of transformer layers to use
-    drop_rate: float       # the dropout percentage rate
-    qkv_bias: bool         # whether to use the bias setting for the KQV matrices.
+    vocab_size: int  # the number of tokens in the vocabulary
+    context_length: int  # the maximum number of token vectors to consider at once
+    emb_dim: int  # the width of the token vectors
+    n_heads: int  # the number of heads to use for multi-head attention
+    n_layers: int  # the number of transformer layers to use
+    drop_rate: float  # the dropout percentage rate
+    qkv_bias: bool  # whether to use the bias setting for the KQV matrices.
+
 
 GPT_CONFIG_124M: GPTConfigDict = {
     "vocab_size": 50257,
@@ -130,7 +140,7 @@ GPT_CONFIG_124M: GPTConfigDict = {
 
 
 class FeedForward(nn.Module):
-    def __init__(self, cfg: GPTConfigDict): 
+    def __init__(self, cfg: GPTConfigDict):
         super().__init__()
         expansion_factor = 4
         dim_external = cfg["emb_dim"]
@@ -197,7 +207,15 @@ class FeedForward(nn.Module):
 
 
 class MultiHeadAttention(nn.Module):
-    def __init__(self, d_in: int, d_out: int, context_length: int, dropout: float, num_heads: int, qkv_bias: bool=False):
+    def __init__(
+        self,
+        d_in: int,
+        d_out: int,
+        context_length: int,
+        dropout: float,
+        num_heads: int,
+        qkv_bias: bool = False,
+    ):
         super().__init__()
         if d_out % num_heads != 0:
             raise ValueError("The number of heads must evenly divide d_out.")
@@ -221,12 +239,14 @@ class MultiHeadAttention(nn.Module):
         self.dropout = nn.Dropout(dropout)
 
         # and the mask, which prevents each token from "seeing" later ones
-        mask = torch.triu( # an upper triangular matrix
-            torch.ones(context_length, context_length), # consisting of ones
-            diagonal=1, # starting one row above the diagonal, leaving the diagonal itself as zeroes.
+        mask = torch.triu(  # an upper triangular matrix
+            torch.ones(context_length, context_length),  # consisting of ones
+            diagonal=1,  # starting one row above the diagonal, leaving the diagonal itself as zeroes.
         )
-        self.register_buffer("mask", mask) # register this tensor as non-trainable, but keep it on the same device
-        self.mask: torch.Tensor # to make the type-checker happy
+        self.register_buffer(
+            "mask", mask
+        )  # register this tensor as non-trainable, but keep it on the same device
+        self.mask: torch.Tensor  # to make the type-checker happy
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         batch, num_tokens, d_in = x.shape
@@ -252,10 +272,12 @@ class MultiHeadAttention(nn.Module):
         attention_scores = q_heads @ k_heads.transpose(2, 3)
         # and apply the causal mask
         mask = self.mask[:num_tokens, :num_tokens]
-        attention_scores = attention_scores.masked_fill(mask == 1, float('-inf'))
+        attention_scores = attention_scores.masked_fill(mask == 1, float("-inf"))
 
         # and we construct the weights using softmax on the scaled final dimension
-        attention_weights = torch.softmax(attention_scores / self.head_width**0.5, dim=-1)
+        attention_weights = torch.softmax(
+            attention_scores / self.head_width**0.5, dim=-1
+        )
         # and apply dropout
         attention_weights = self.dropout(attention_weights)
 
@@ -264,7 +286,9 @@ class MultiHeadAttention(nn.Module):
         # v_heads has the shape:          [batch, num_heads, num_tokens, head_width]
         # if we multiply them, we get:    [batch, num_heads, num_tokens, head_width]
         # but in the end, we want:        [batch, num_tokens, d_out]
-        context = attention_weights @ v_heads # [batch, num_heads, num_tokens, head_width]
+        context = (
+            attention_weights @ v_heads
+        )  # [batch, num_heads, num_tokens, head_width]
 
         # so we need to first transpose and get [batch, num_tokens, num_heads, head_width]
         context = context.transpose(1, 2)
@@ -299,6 +323,7 @@ class TransformerBlock(nn.Module):
     """
     A single GPT-2 transformer block.
     """
+
     def __init__(self, cfg: GPTConfigDict):
         super().__init__()
         self.layer_norm_1 = LayerNorm(cfg["emb_dim"])
@@ -364,6 +389,7 @@ class GPTModel(nn.Module):
     can't do training on its own. That said, we will be training this later
     using some functions defined in training.ipynb.
     """
+
     def __init__(self, cfg: GPTConfigDict):
         """Initialize model with config."""
         super().__init__()
@@ -409,12 +435,13 @@ class GPTModel(nn.Module):
 
 
 def get_device() -> torch.device:
-    if torch.cuda.is_available(): # type: ignore[attr-defined]
+    if torch.cuda.is_available():  # type: ignore[attr-defined]
         return torch.device("cuda")
-    elif torch.backends.mps.is_available(): # type: ignore[attr-defined]
+    elif torch.backends.mps.is_available():  # type: ignore[attr-defined]
         return torch.device("mps:0")
     else:
         return torch.device("cpu")
+
 
 def generate_text_simple(model, idx, max_new_tokens, context_size, device=get_device()):
     """
@@ -431,6 +458,7 @@ def generate_text_simple(model, idx, max_new_tokens, context_size, device=get_de
         idx = torch.cat((idx, idx_next), dim=1)
     return idx
 
+
 def smoke_test(prompt):
     """
     Pass the prompt to the (untrained) GPT model with a manual seed. Should correspond to the expected output.
@@ -442,14 +470,14 @@ def smoke_test(prompt):
     encoded_tensor = torch.tensor(encoded).unsqueeze(0)
     model.eval()
     out = generate_text_simple(
-        model,
-        encoded_tensor,
-        6,
-        GPT_CONFIG_124M["context_length"]
+        model, encoded_tensor, 6, GPT_CONFIG_124M["context_length"]
     )
     decoded_text = tokenizer.decode(out.squeeze(0).tolist())
     print(decoded_text)
 
+
 if __name__ == "__main__":
-    smoke_test("Hello, I am") # should output "Hello, I am Featureiman Byeswickattribute argue"
+    smoke_test(
+        "Hello, I am"
+    )  # should output "Hello, I am Featureiman Byeswickattribute argue"
 
