@@ -26,6 +26,7 @@ add-bounds = "major"
 [dependency-groups]
 dev = [
     "mypy>=1.16.0,<2.0.0",
+    "ruff>=0.12.2,<0.13.0",
     "tensorflow>=2.19.0,<3.0.0",
 ]
 
