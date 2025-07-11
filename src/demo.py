@@ -102,7 +102,7 @@ def ask_model(model: gpt.GPTModel, instruction: str) -> list[tuple[float, str]]:
         max_new_tokens=1024,
         context_size=1024,
         topk=50,
-        temperature=1.5,
+        temperature=0.8,
     )
     prompt_len = token_len(prompt)
     return pairs[prompt_len:]
