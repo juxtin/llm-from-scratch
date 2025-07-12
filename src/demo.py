@@ -1,4 +1,5 @@
 import gpt
+import time
 import training
 import openai
 import torch
@@ -124,8 +125,12 @@ def intro():
 
 def chat_loop(model: gpt.GPTModel):
     instruction = input(">> ").strip()
+    start = time.time()
     pairs = ask_model(model, instruction)
+    end = time.time()
+    tps = len(pairs) / (end - start)
     print_annotated(pairs)
+    print(f"{tps:.2f} tokens/sec")
     chat_loop(model)
 
 def main():
