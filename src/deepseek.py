@@ -62,163 +62,11 @@
 # a naive KV caching strategy is great for smaller models, but it doesn't scale well to larger sizes. For
 # that, we'll need to get much more clever about it.
 
-# In[67]:
+# In[ ]:
 
 
 import torch
 import torch.nn as nn
-from typing import Optional
-
-class KVCache():
-    def __init__(self):
-        self.x: Optional[torch.Tensor] = None
-        self.keys: Optional[torch.Tensor] = None
-        self.vals: Optional[torch.Tensor] = None
-
-    def cache_hit(self, x: torch.Tensor) -> bool:
-        """As an extremely rough cut, just check that the x (param) looks kinda
-        like the previous x plus a new row"""
-        if self.x is None:
-            return False
-        _, cached_tokens, _ = self.x.shape
-        _, incoming_tokens, _ = x.shape
-        if cached_tokens != (incoming_tokens - 1):
-            # Rather than require the caller to manually reset the cache, I'll just reset it
-            # whenever the incoming data looks like it comes from a new sequence.
-            self.reset()
-            return False
-        return True
-
-    def save_keys(self, x: torch.Tensor, val: torch.Tensor):
-        self.x = x
-        self.keys = val
-
-    def save_vals(self, x: torch.Tensor, val: torch.Tensor):
-        self.x = x
-        self.vals = val
-
-    def get_keys(self, x: torch.Tensor) -> nn.Linear:
-        assert(self.keys is not None)
-        return self.keys
-
-    def get_vals(self, x: torch.Tensor) -> nn.Linear:
-        assert(self.vals is not None)
-        return self.vals
-
-    def reset(self):
-        self.__init__()
-
-class MultiHeadAttentionWithCache(nn.Module):
-    def __init__(
-        self,
-        d_in: int,  # embedding dimension
-        d_out: int, # embedding dimension
-        context_length: int,
-        dropout: float,
-        num_heads: int,
-        qkv_bias: bool = False,
-    ):
-        super().__init__()
-        if d_out % num_heads != 0:
-            raise ValueError("The number of heads must evenly divide d_out.")
-        self.d_in = d_in
-        self.d_out = d_out
-        self.num_heads = num_heads
-        self.head_width = d_out // num_heads
-        self.qkv_bias = qkv_bias
-
-        # construct the weights for Q, K, and V.
-        # these will be registered as trainable parameters automatically.
-        self.w_query = nn.Linear(d_in, d_out, bias=qkv_bias)
-        self.w_key = nn.Linear(d_in, d_out, bias=qkv_bias)
-        self.w_value = nn.Linear(d_in, d_out, bias=qkv_bias)
-
-        # create a KV cache
-        self.kv_cache = KVCache()
-
-        # and the output projection, also trainable.
-        self.w_out = nn.Linear(d_out, d_out)
-
-        # and the dropout layer. not trainable, just drops random values
-        # to zero with a probability determined by the dropout parameter
-        self.dropout = nn.Dropout(dropout)
-
-        # and the mask, which prevents each token from "seeing" later ones
-        mask = torch.triu(  # an upper triangular matrix
-            torch.ones(context_length, context_length),  # consisting of ones
-            diagonal=1,  # starting one row above the diagonal, leaving the diagonal itself as zeroes.
-        )
-        self.register_buffer(
-            "mask", mask
-        )  # register this tensor as non-trainable, but keep it on the same device
-        self.mask: torch.Tensor  # to make the type-checker happy
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        batch, num_tokens, d_in = x.shape
-        queries = self.w_query(x)
-
-        if self.kv_cache.cache_hit(x):
-            new_token: torch.Tensor = x[:, -1:, :]
-
-            keys = self.kv_cache.get_keys(x)
-            new_key_row: torch.Tensor = self.w_key(new_token)
-            keys = torch.cat([keys, new_key_row], dim=1)
-
-            values = self.kv_cache.get_vals(x)
-            new_val_row: torch.Tensor = self.w_value(new_token)
-            values = torch.cat([values, new_val_row], dim=1)
-        else:
-            keys = self.w_key(x)
-            values = self.w_value(x)
-
-        self.kv_cache.save_keys(x, keys)
-        self.kv_cache.save_vals(x, values)
-
-        # Split the last dimension of the tensors into multiple heads
-        q_heads = queries.view(batch, num_tokens, self.num_heads, self.head_width)
-        k_heads = keys.view(batch, num_tokens, self.num_heads, self.head_width)
-        v_heads = values.view(batch, num_tokens, self.num_heads, self.head_width)
-
-        #                                  [  0  ,     1     ,    2     ,      3    ]
-        # {q,k,v}_heads now have the shape [batch, num_tokens, num_heads, head_width],
-        # but we want them to be:          [batch, num_heads, num_tokens, head_width]
-        q_heads = q_heads.transpose(1, 2)
-        k_heads = k_heads.transpose(1, 2)
-        v_heads = v_heads.transpose(1, 2)
-
-        # now we need to calculate the raw dot-product attention scores between Q and K^T,
-        # where K^T has the shape [batch, num_heads, head_width, num_tokens].
-        # that gives attention_scores the shape [batch, num_heads, num_tokens, num_tokens]
-        attention_scores = q_heads @ k_heads.transpose(2, 3)
-        # and apply the causal mask
-        mask = self.mask[:num_tokens, :num_tokens]
-        attention_scores = attention_scores.masked_fill(mask == 1, float("-inf"))
-
-        # and we construct the weights using softmax on the scaled final dimension
-        attention_weights = torch.softmax(
-            attention_scores / self.head_width**0.5, dim=-1
-        )
-        # and apply dropout
-        attention_weights = self.dropout(attention_weights)
-
-        #                                 [  0  ,     1    ,     2     ,     3     ]
-        # attention_weights has the shape [batch, num_heads, num_tokens, num_tokens]
-        # v_heads has the shape:          [batch, num_heads, num_tokens, head_width]
-        # if we multiply them, we get:    [batch, num_heads, num_tokens, head_width]
-        # but in the end, we want:        [batch, num_tokens, d_out]
-        context = (
-            attention_weights @ v_heads
-        )  # [batch, num_heads, num_tokens, head_width]
-
-        # so we need to first transpose and get [batch, num_tokens, num_heads, head_width]
-        context = context.transpose(1, 2)
-        # and then concatenate the last two dimensions together to get d_out
-        context = context.contiguous().view(batch, num_tokens, self.d_out)
-        # and multiply by the output projection
-        return self.w_out(context)
-
-    def reset(self):
-        self.kv_cache.reset()
 
 
 # 
@@ -231,46 +79,34 @@ class MultiHeadLatentAttentionV1(nn.Module):
     key-value joint compression."""
     def __init__(
         self,
-        d_in: int,  # embedding dimension
-        d_out: int, # embedding dimension
+        emb_dim: int, # the embedding dimension
         d_latent: int,    # the latent dimension
         context_length: int,
-        dropout: float,
         num_heads: int,
-        qkv_bias: bool = False,
     ):
         super().__init__()
-        if d_out % num_heads != 0:
+        if emb_dim % num_heads != 0:
             raise ValueError("The number of heads must evenly divide d_out.")
-        self.d_in = d_in
-        self.d_out = d_out
+        self.emb_dim = emb_dim
         self.num_heads = num_heads
-        self.head_width = d_out // num_heads
-        self.qkv_bias = qkv_bias
+        self.head_width = emb_dim // num_heads
 
-        # construct the weights for Q, K, and V.
-        # these will be registered as trainable parameters automatically.
-        self.w_query = nn.Linear(d_in, d_out, bias=qkv_bias)
-        self.w_key = nn.Linear(d_in, d_out, bias=qkv_bias)
-        self.w_value = nn.Linear(d_in, d_out, bias=qkv_bias)
+        # For now, the query weights are classic flavor
+        self.w_query = nn.Linear(emb_dim, emb_dim)
 
         # The latent stuff
-        self.w_dkv = nn.Linear(d_out, d_latent, bias=False)
-        self.w_uk = nn.Linear(d_latent, d_out, bias=False)
-        self.w_uv = nn.Linear(d_latent, d_out, bias=False)
+        self.w_dkv = nn.Linear(emb_dim, d_latent, bias=False)
+        self.w_uk = nn.Linear(d_latent, emb_dim, bias=False)
+        self.w_uv = nn.Linear(d_latent, emb_dim, bias=False)
 
-        # create a KV cache (not used yet)
-        self.ckv = torch.zeros([d_latent, d_latent]) 
-        self.register_buffer(
-            "ckv", self.ckv
-        )
+        # We have our own LayerNorm now, unlike in GPT
+        self.ln = nn.LayerNorm(d_latent, d_latent)
 
         # and the output projection, also trainable.
-        self.w_out = nn.Linear(d_out, d_out)
+        self.w_out = nn.Linear(emb_dim, emb_dim, bias=False)
 
-        # and the dropout layer. not trainable, just drops random values
-        # to zero with a probability determined by the dropout parameter
-        self.dropout = nn.Dropout(dropout)
+        # save a place for the absorbed K (w_query @ w_uk)
+        self.register_buffer("absorbed_k", None)
 
         # and the mask, which prevents each token from "seeing" later ones
         mask = torch.triu(  # an upper triangular matrix
@@ -282,59 +118,47 @@ class MultiHeadLatentAttentionV1(nn.Module):
         )  # register this tensor as non-trainable, but keep it on the same device
         self.mask: torch.Tensor  # to make the type-checker happy
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        batch, num_tokens, d_in = x.shape
-        queries = self.w_query(x)
-        ckv = self.w_dkv(x)
-        keys = self.w_uk(ckv)
-        values = self.w_uv(ckv)
+    def forward(
+        self, x: torch.Tensor, c_kv: torch.Tensor, past_tokens: int = 0
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        B, S, D = x.shape # Batch, Sequence, Dimension (embedding)
+        if self.absorbed_k is None:
+            self.absorbed_k = torch.matmul(self.w_queries.weight, self.w_uk.weight).view(self.num_heads, self.head_width, self.d_latent)
 
-        # Split the last dimension of the tensors into multiple heads
-        q_heads = queries.view(batch, num_tokens, self.num_heads, self.head_width)
-        k_heads = keys.view(batch, num_tokens, self.num_heads, self.head_width)
-        v_heads = values.view(batch, num_tokens, self.num_heads, self.head_width)
+        new_kv_rows = self.w_dkv(x)
+        c_kv = torch.cat([c_kv, new_kv_rows])
+        S_full = c_kv.size[1]
 
-        #                                  [  0  ,     1     ,    2     ,      3    ]
-        # {q,k,v}_heads now have the shape [batch, num_tokens, num_heads, head_width],
-        # but we want them to be:          [batch, num_heads, num_tokens, head_width]
-        q_heads = q_heads.transpose(1, 2)
-        k_heads = k_heads.transpose(1, 2)
-        v_heads = v_heads.transpose(1, 2)
+        values = self.w_uv(c_kv).view(B, self.num_heads, S_full, self.head_width)
+        queries = x.view(B, S, self.num_heads, self.head_width) # no unique queries var because of absorbed_k
+        # NOTE: no keys variable because of absorbed_k
 
-        # now we need to calculate the raw dot-product attention scores between Q and K^T,
-        # where K^T has the shape [batch, num_heads, head_width, num_tokens].
-        # that gives attention_scores the shape [batch, num_heads, num_tokens, num_tokens]
-        attention_scores = q_heads @ k_heads.transpose(2, 3)
-        # and apply the causal mask
-        mask = self.mask[:num_tokens, :num_tokens]
-        attention_scores = attention_scores.masked_fill(mask == 1, float("-inf"))
+        attention_scores = torch.zeros([B, self.num_heads, S, S_full], device=x.device) # new attention scores only
+        for h in range(self.num_heads):
+            attention_h = (queries[:, :, h] @ self.absorbed_k[h]).view(B, S, S_full)
+            attention_scores[:, h] = torch.bmm(attention_h, c_kv)
 
-        # and we construct the weights using softmax on the scaled final dimension
-        attention_weights = torch.softmax(
-            attention_scores / self.head_width**0.5, dim=-1
-        )
-        # and apply dropout
-        attention_weights = self.dropout(attention_weights)
+        mask = torch.tril(torch.ones([S, S_full], device=x.device), diagonal=past_tokens)
+        attention_scores = attention_scores.masked_fill(mask.view(1, 1, S, S_full) == 0, float("-inf")) / self.head_width ** 0.5
+        attention_scores = torch.softmax(attention_scores, -1)
 
-        #                                 [  0  ,     1    ,     2     ,     3     ]
-        # attention_weights has the shape [batch, num_heads, num_tokens, num_tokens]
-        # v_heads has the shape:          [batch, num_heads, num_tokens, head_width]
-        # if we multiply them, we get:    [batch, num_heads, num_tokens, head_width]
-        # but in the end, we want:        [batch, num_tokens, d_out]
-        context = (
-            attention_weights @ v_heads
-        )  # [batch, num_heads, num_tokens, head_width]
+        out_heads = []
+        for h in range(self.num_heads):
+            context_h = torch.matmul(attention_scores[:, h], values[:, h])
+            out_heads.append(context_h)
 
-        # so we need to first transpose and get [batch, num_tokens, num_heads, head_width]
-        context = context.transpose(1, 2)
-        # and then concatenate the last two dimensions together to get d_out
-        context = context.contiguous().view(batch, num_tokens, self.d_out)
-        # and multiply by the output projection
-        return self.w_out(context)
+        out = torch.cat(out_heads, dim=-1)
+
+        return self.w_out(out), c_kv
 
 
-# In[69]:
+# In[77]:
 
+
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path().resolve().parent / "src"))
 
 import gpt
 
@@ -353,7 +177,7 @@ DeepSeekSmall: DeepSeekConfigDict = {
 }
 
 
-# In[ ]:
+# In[78]:
 
 
 class DeepSeekTransformerBlock(nn.Module):
@@ -365,16 +189,16 @@ class DeepSeekTransformerBlock(nn.Module):
         super().__init__()
         self.layer_norm_1 = gpt.LayerNorm(cfg["emb_dim"])
         self.attention = MultiHeadLatentAttentionV1(
-            cfg["emb_dim"],
-            cfg["emb_dim"],
-            cfg["context_length"],
-            cfg["drop_rate"],
-            cfg["n_heads"],
-            cfg["qkv_bias"],
+            d_in=cfg["emb_dim"],
+            d_out=cfg["emb_dim"],
+            d_latent=cfg["latent_dim"],
+            context_length=cfg["context_length"],
+            dropout=cfg["drop_rate"],
+            num_heads=cfg["n_heads"],
         )
         self.drop_rate = cfg["drop_rate"]
-        self.layer_norm_2 = LayerNorm(cfg["emb_dim"])
-        self.feedforward = FeedForward(cfg)
+        self.layer_norm_2 = gpt.LayerNorm(cfg["emb_dim"])
+        self.feedforward = gpt.FeedForward(cfg)
         self.dropout = nn.Dropout(self.drop_rate)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -413,6 +237,9 @@ class DeepSeekModel(nn.Module):
         self.layer_norm = gpt.LayerNorm(cfg["emb_dim"])
         self.output = nn.Linear(cfg["emb_dim"], cfg["vocab_size"], bias=False)
 
+    def clear(self):
+        pass
+
     def forward(self, in_idx: torch.Tensor) -> torch.Tensor:
         """Forward pass: input indices to logits."""
         batch_size, sequence_length = in_idx.shape
@@ -431,6 +258,50 @@ class DeepSeekModel(nn.Module):
 
     def device(self) -> torch.device:
         return next(self.parameters()).device
+
+
+# In[80]:
+
+
+import tiktoken
+
+def generate_text_simple(model, idx, max_new_tokens, context_size, device=gpt.get_device()):
+    """
+    A helper function used by smoke_test. It's easier to pass the prompt to smoke_test, rather than call this directly.
+    """
+    idx.to(device)
+    for _ in range(max_new_tokens):
+        idx_cond = idx[:, -context_size:]
+        with torch.no_grad():
+            logits = model(idx_cond)
+        logits = logits[:, -1, :]
+        probabilities = torch.softmax(logits, dim=-1)
+        idx_next = torch.argmax(probabilities, dim=-1, keepdim=True)
+        idx = torch.cat((idx, idx_next), dim=1)
+    return idx
+
+
+def smoke_test(prompt):
+    """
+    Pass the prompt to the (untrained) GPT model with a manual seed. Should correspond to the expected output.
+    """
+    torch.manual_seed(123)
+    tokenizer = tiktoken.get_encoding("gpt2")
+    model = DeepSeekModel(DeepSeekSmall)
+    encoded = tokenizer.encode(prompt)
+    encoded_tensor = torch.tensor(encoded).unsqueeze(0)
+    model.eval()
+    out = generate_text_simple(
+        model, encoded_tensor, 6, DeepSeekSmall["context_length"]
+    )
+    decoded_text = tokenizer.decode(out.squeeze(0).tolist())
+    print(decoded_text)
+
+
+if __name__ == "__main__":
+    smoke_test(
+        "Hello, I am"
+    )  # should output "Hello, I am Featureiman Byeswickattribute argue"
 
 
 # In[ ]:
