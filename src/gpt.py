@@ -319,8 +319,6 @@ class MultiHeadAttention(nn.Module):
 # In[ ]:
 
 
-import deepseek
-
 class TransformerBlock(nn.Module):
     """
     A single GPT-2 transformer block.
@@ -329,7 +327,7 @@ class TransformerBlock(nn.Module):
     def __init__(self, cfg: GPTConfigDict):
         super().__init__()
         self.layer_norm_1 = LayerNorm(cfg["emb_dim"])
-        self.attention = MultiHeadAttention( # Temporarily(?) try out the caching version
+        self.attention = MultiHeadAttention(
             cfg["emb_dim"],
             cfg["emb_dim"],
             cfg["context_length"],
