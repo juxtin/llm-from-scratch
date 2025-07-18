@@ -7,7 +7,7 @@
 # 
 # Having created the GPT model in [gpt.ipynb](./gpt.ipynb), it's time to try training it.
 
-# In[ ]:
+# In[1]:
 
 
 import import_ipynb
@@ -177,7 +177,7 @@ class GPTDatasetV1(Dataset):
 # Rather than adding the parameters one by one to every function that might need them,
 # I'm going to create a dataclass that we can pass around.
 
-# In[ ]:
+# In[5]:
 
 
 class TrainingConfig(TypedDict):
@@ -263,7 +263,7 @@ def new_training_config(
 # 7. finally, `optimizer.step()` updates the optimizer's parameters for one step.
 # 
 
-# In[ ]:
+# In[6]:
 
 
 # Download the text if it's not yet available, then return it as a string
@@ -523,7 +523,7 @@ if __name__ == "__main__":
 # 
 # 
 
-# In[ ]:
+# In[10]:
 
 
 def save(
@@ -575,7 +575,7 @@ def load(
 # 
 # This helper takes on a little bit of that burden.
 
-# In[20]:
+# In[11]:
 
 
 def default_optimizer(model, cfg: TrainingConfig):
@@ -619,7 +619,7 @@ def default_optimizer(model, cfg: TrainingConfig):
 # it needs to peek at the training loader. This is basically unavoidable, since the scheduler _only_ passes the step number
 # and not anything else that would be useful, like the total number of steps or anything like that.
 
-# In[ ]:
+# In[12]:
 
 
 LearningRateFunction = Callable[[int], float]
@@ -660,7 +660,7 @@ def cosine_decay_lr(
 # 
 # The class below is modeled after the MLflow methods that I used before.
 
-# In[12]:
+# In[13]:
 
 
 class Metrics(ABC):
@@ -767,7 +767,7 @@ class MLflowMetrics(Metrics):
 # write another abstract base class that can provide a way to satisfy those three use cases (and others), hopefully
 # with minimal extra code.
 
-# In[16]:
+# In[14]:
 
 
 class ExampleGenerator(ABC):
@@ -814,11 +814,11 @@ class SimpleCompletion(ExampleGenerator):
 # no option yet to do something like generating and logging an example completion,
 # although I'll probably add that soon.
 
-# In[ ]:
+# In[15]:
 
 
 def train(
-    model: gpt.GPTModel,
+    model, # : gpt.GPTModel, # for type-related reasons, leaving this untyped for now
     optimizer: optim.Optimizer,
     training_loader: DataLoader,
     validation_loader: Optional[DataLoader],
@@ -927,7 +927,7 @@ def train(
         raise error
 
 
-# In[19]:
+# In[16]:
 
 
 if __name__ == "__main__":
