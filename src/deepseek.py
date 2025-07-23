@@ -71,7 +71,7 @@ import torch.nn.functional as F
 from typing import Optional
 
 
-# In[ ]:
+# In[2]:
 
 
 class MultiHeadLatentAttentionV1(nn.Module):
@@ -479,6 +479,40 @@ def train_verdict(model: DeepSeekModel) -> float:
 model = DeepSeekModel(cfg=DeepSeekSmall)
 
 train_verdict(model)
+
+
+# In[10]:
+
+
+def text_to_token_ids(
+    text: str, tokenizer: tiktoken.Encoding, device: torch.device = gpt.get_device()
+) -> torch.Tensor:
+    encoded = tokenizer.encode(text, allowed_special={"<|endoftext|>"})
+    encoded_tensor = torch.tensor(encoded).unsqueeze(0)  # add batch dimension
+    return encoded_tensor.to(device)
+
+
+def token_ids_to_text(token_ids: torch.Tensor, tokenizer: tiktoken.Encoding) -> str:
+    flat = token_ids.squeeze(0)  # remove batch dimension
+    return tokenizer.decode(flat.tolist())
+
+
+def trained_example(model: DeepSeekModel, start_context):
+    torch.manual_seed(123)
+    model.eval()
+    tokenizer = tiktoken.get_encoding("gpt2")
+
+    token_ids = gpt.generate_text_simple(
+        model=model,
+        idx=text_to_token_ids(start_context, tokenizer),
+        max_new_tokens=10,
+        context_size=128,
+    )
+
+    print("Output text (trained):\n", token_ids_to_text(token_ids, tokenizer))
+
+model.to(gpt.get_device())
+trained_example(model, "He never")
 
 
 # In[ ]:
