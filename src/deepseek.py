@@ -171,7 +171,7 @@ class MultiHeadLatentAttentionV1(nn.Module):
 # 
 #   - where $\theta_i$ is a frequency-based position angle.
 
-# In[ ]:
+# In[93]:
 
 
 def apply_rope(x: torch.Tensor, base: int = 10_000) -> torch.Tensor:
@@ -201,7 +201,7 @@ def apply_rope(x: torch.Tensor, base: int = 10_000) -> torch.Tensor:
 
 # 
 
-# In[41]:
+# In[ ]:
 
 
 class MultiHeadLatentAttentionWithRoPE(nn.Module):
@@ -211,6 +211,7 @@ class MultiHeadLatentAttentionWithRoPE(nn.Module):
         emb_dim: int, # the embedding dimension
         d_latent: int,    # the latent dimension
         num_heads: int,
+        context_length: int,
     ):
         super().__init__()
         if emb_dim % num_heads != 0:
@@ -224,19 +225,29 @@ class MultiHeadLatentAttentionWithRoPE(nn.Module):
         self.w_dkv = nn.Linear(emb_dim, d_latent, bias=False) # [d_latent, emb_dim]
         self.w_dq = nn.Linear(emb_dim, d_latent, bias=False)  # [d_latent, emb_dim]
 
-        # Latent up (TODO: change shapes so I can use forward() properly)
+        # Latent up
         self.w_uk = nn.Linear(d_latent, emb_dim, bias=False)  # [emb_dim, d_latent]
         self.w_uv = nn.Linear(d_latent, emb_dim, bias=False)  # [emb_dim, d_latent]
         self.w_uq = nn.Linear(d_latent, emb_dim, bias=False)  # [emb_dim, d_latent]
 
         # RoPE
         self.w_kr = nn.Linear(d_latent, self.head_width, bias=False)  # [head_width, d_latent]
+        self.w_qr = nn.Linear(d_latent, emb_dim, bias=False)  # [emb_dim, d_latent]
 
         # and the output projection, also trainable.
         self.w_out = nn.Linear(emb_dim, emb_dim, bias=False) # [emb_dim, emb_dim]
 
         # We have our own LayerNorm now, unlike in GPT
         self.ln = nn.LayerNorm(d_latent)
+
+        mask = torch.triu(
+            torch.ones(context_length, context_length),
+            diagonal=1,
+        )
+        self.register_buffer(
+            "mask", mask
+        )
+        self.mask: torch.Tensor
 
     def forward(self, x: torch.Tensor, c_kv: Optional[torch.Tensor] = None) -> tuple[torch.Tensor, torch.Tensor]:
         B, S, D = x.shape # Batch, Sequence, Dimension (embedding)
@@ -255,41 +266,45 @@ class MultiHeadLatentAttentionWithRoPE(nn.Module):
         S_full = c_kv.size(1) # type: ignore
 
         #  3. Multiply q_c with updated KV cache
-        v_c = q_c @ c_kv.transpose(1, 2) # [B, S, d_latent] * [B, d_latent, S_full] = [B, S, S_full] # type: ignore
+        c_attn_scores = q_c @ c_kv.transpose(1, 2) # [B, S, d_latent] * [B, d_latent, S_full] = [B, S, S_full] # type: ignore
 
         # Phase 2: RoPE
         #  4. Compute k_r
         head_kr = self.w_kr(c_kv) # [B, S_full, d_latent] * [d_latent, head_width] = [B, S_full, head_width]
         shared_kr = apply_rope(head_kr)
+        k_r = shared_kr.repeat(1, 1, self.num_heads) # [B, S_full, emb_dim]
+        # TODO: cache k_r? replicate it to other blocks somehow?
 
-        return shared_kr, c_kv
+        #  5. Compute q_r
+        c_q = self.w_dq(x)
+        full_qr = self.w_qr(c_q)
+        q_r = apply_rope(full_qr) # [B, S, emb_dim]
 
-        ### STOP HERE
+        #  6. Calculate the rotated attention scores
+        ro_attn_scores = q_r @ k_r.transpose(1, 2) # [B, S, S_full]
 
-        # [B, num_heads, S, S_full]
-        attention_scores = torch.zeros([B, self.num_heads, S, S_full], device=x.device) # new attention scores only
-        for h in range(self.num_heads):
-            # [B, S, head_width] * [head_width, d_latent] = [B, S, d_latent]
-            attention_h = queries[:, :, h] @ self.absorbed_k[h]
-            # (rhs) [B, S, d_latent] * [B, d_latent, S_full] = [B, S, S_full]
-            attention_scores[:, h] = torch.bmm(attention_h, c_kv.transpose(1, 2)) # type: ignore
+        # Phase 3: Bringing it together
+        #  7. Add both attention score vectors and add causal mask
+        attn_scores = c_attn_scores + ro_attn_scores # [B, S, S_full]
+        mask = self.mask[:S_full, :S_full]
+        attn_scores = attn_scores.masked_fill(mask == 1, float("-inf"))
 
+        #  8. Compute the attention weights
+        attn_weights = torch.softmax( # [B, S, S_full]
+            attn_scores * (self.head_width ** -0.5),
+            dim=-1
+        )
 
-        mask = torch.tril(torch.ones([S, S_full], device=x.device), diagonal=past_tokens)
-        attention_scores = attention_scores.masked_fill(mask.view(1, 1, S, S_full) == 0, float("-inf")) / self.head_width ** 0.5
-        # [B, num_heads, S, S_full]
-        attention_weights = F.softmax(attention_scores, dim=-1)
+        #  9. Compute v_c
+        v_c = self.w_uv(c_kv) # [B, S, D]
 
-        out_heads = []
-        for h in range(self.num_heads):
-            # [B, num_heads, S, S_full] * [B, num_heads, S_full, head_width] = [B, S, head_width]
-            context_h = torch.matmul(attention_weights[:, h], values[:, h])
-            out_heads.append(context_h)
+        #  10. Compute the context vector
+        context_vector = attn_weights @ v_c # [B, S, S_full] * [B, S, D] = [B, S, D]
 
-        # [B, S, D]
-        out = torch.cat(out_heads, dim=-1)
+        #  11. Compute the final attention logits
+        logits = self.w_out(context_vector)
 
-        return self.w_out(out), c_kv
+        return logits, c_kv
 
 
 # In[3]:
@@ -644,4 +659,32 @@ def trained_example(model: DeepSeekModel, start_context):
 
 model.to(gpt.get_device())
 trained_example(model, "He never")
+
+
+# In[129]:
+
+
+emb_dim = 8
+d_latent = 4
+num_heads = 2
+context_length = 512
+
+c_kv = torch.rand(1, 4, d_latent)
+x = torch.rand(1, 1, emb_dim)
+
+attn = MultiHeadLatentAttentionWithRoPE(
+    emb_dim=emb_dim,
+    d_latent=d_latent,
+    num_heads=num_heads,
+    context_length=context_length,
+)
+
+res, cache = attn(x, c_kv)
+res.shape
+
+
+# In[ ]:
+
+
+
 
