@@ -62,7 +62,7 @@
 # a naive KV caching strategy is great for smaller models, but it doesn't scale well to larger sizes. For
 # that, we'll need to get much more clever about it.
 
-# In[1]:
+# In[3]:
 
 
 import torch
@@ -134,6 +134,137 @@ class MultiHeadLatentAttentionV1(nn.Module):
         # [B, S, num_heads, head_width]
         queries = x.view(B, S, self.num_heads, self.head_width) # no unique queries var because of absorbed_k
         # NOTE: no keys variable because of absorbed_k
+
+        # [B, num_heads, S, S_full]
+        attention_scores = torch.zeros([B, self.num_heads, S, S_full], device=x.device) # new attention scores only
+        for h in range(self.num_heads):
+            # [B, S, head_width] * [head_width, d_latent] = [B, S, d_latent]
+            attention_h = queries[:, :, h] @ self.absorbed_k[h]
+            # (rhs) [B, S, d_latent] * [B, d_latent, S_full] = [B, S, S_full]
+            attention_scores[:, h] = torch.bmm(attention_h, c_kv.transpose(1, 2)) # type: ignore
+
+
+        mask = torch.tril(torch.ones([S, S_full], device=x.device), diagonal=past_tokens)
+        attention_scores = attention_scores.masked_fill(mask.view(1, 1, S, S_full) == 0, float("-inf")) / self.head_width ** 0.5
+        # [B, num_heads, S, S_full]
+        attention_weights = F.softmax(attention_scores, dim=-1)
+
+        out_heads = []
+        for h in range(self.num_heads):
+            # [B, num_heads, S, S_full] * [B, num_heads, S_full, head_width] = [B, S, head_width]
+            context_h = torch.matmul(attention_weights[:, h], values[:, h])
+            out_heads.append(context_h)
+
+        # [B, S, D]
+        out = torch.cat(out_heads, dim=-1)
+
+        return self.w_out(out), c_kv
+
+
+# # RoPE
+# 
+# For each vector $x \in \mathbb{R}^{d}$ at position $i$, produce a rotated version $x^{(i)}$:
+# 
+#   - $x_\text{even}^{(i)} = x_\text{even} \cos \theta_i - x_\text{odd} \sin \theta_i$
+# 
+#   - $x_\text{odd}^{(i)} = x_\text{even} \sin \theta_i + x_\text{odd} \cos \theta_i$
+# 
+#   - where $\theta_i$ is a frequency-based position angle.
+
+# In[ ]:
+
+
+def apply_rope(x: torch.Tensor, base: int = 10_000) -> torch.Tensor:
+    """
+    Applies a rotation pair-wise to the final dimension of x (taken to be a
+    tensor of [batch, seq, head_dim]) to encode positional information to the
+    tokens.
+    """
+    B, S, D = x.shape
+    k = torch.arange(D//2, device=x.device, dtype=x.dtype) # [1, D//2]
+    positions = torch.arange(S, device=x.device, dtype=x.dtype) # [1, S]
+    freqs = base ** (- (2 * k) / D) # [1, D//2]
+    angles = torch.outer(positions, freqs) # [S, D//2]
+
+    sin = torch.sin(angles).unsqueeze(0) # [1, S, D//2]
+    cos = torch.cos(angles).unsqueeze(0) # [1, S, D//2]
+
+    x_even = x[..., 0::2] # [B, S, D//2]
+    x_odd = x[..., 1::2] # [B, S, D//2]
+
+    x_rotated = torch.empty_like(x)
+    x_rotated[..., 0::2] = x_even * cos - x_odd * sin
+    x_rotated[..., 1::2] = x_even * sin + x_odd * cos
+
+    return x_rotated
+
+
+# 
+
+# In[41]:
+
+
+class MultiHeadLatentAttentionWithRoPE(nn.Module):
+    """A more complete implementation of MLA with low-rank joint key-value compression and RoPE."""
+    def __init__(
+        self,
+        emb_dim: int, # the embedding dimension
+        d_latent: int,    # the latent dimension
+        num_heads: int,
+    ):
+        super().__init__()
+        if emb_dim % num_heads != 0:
+            raise ValueError("The number of heads must evenly divide d_out.")
+        self.emb_dim = emb_dim
+        self.d_latent = d_latent
+        self.num_heads = num_heads
+        self.head_width = emb_dim // num_heads
+
+        # Latent down
+        self.w_dkv = nn.Linear(emb_dim, d_latent, bias=False) # [d_latent, emb_dim]
+        self.w_dq = nn.Linear(emb_dim, d_latent, bias=False)  # [d_latent, emb_dim]
+
+        # Latent up (TODO: change shapes so I can use forward() properly)
+        self.w_uk = nn.Linear(d_latent, emb_dim, bias=False)  # [emb_dim, d_latent]
+        self.w_uv = nn.Linear(d_latent, emb_dim, bias=False)  # [emb_dim, d_latent]
+        self.w_uq = nn.Linear(d_latent, emb_dim, bias=False)  # [emb_dim, d_latent]
+
+        # RoPE
+        self.w_kr = nn.Linear(d_latent, self.head_width, bias=False)  # [head_width, d_latent]
+
+        # and the output projection, also trainable.
+        self.w_out = nn.Linear(emb_dim, emb_dim, bias=False) # [emb_dim, emb_dim]
+
+        # We have our own LayerNorm now, unlike in GPT
+        self.ln = nn.LayerNorm(d_latent)
+
+    def forward(self, x: torch.Tensor, c_kv: Optional[torch.Tensor] = None) -> tuple[torch.Tensor, torch.Tensor]:
+        B, S, D = x.shape # Batch, Sequence, Dimension (embedding)
+
+        # Phase 1: No RoPE
+        #  1. Absorption trick/compute q_c
+        absorbed_q = self.w_dq.weight.T @ self.w_uq.weight.T @ self.w_uk.weight
+        q_c = x @ absorbed_q # [B, S, d_latent]
+
+        #  2. compute new KV rows and append to cache
+        new_kv_rows = self.ln(self.w_dkv(x)) # [B, S, emb_dim] * [emb_dim, d_latent] = [B, S, d_latent]
+        if c_kv is None:
+            c_kv = new_kv_rows
+        else:
+            c_kv = torch.cat([c_kv, new_kv_rows], dim=1) # [B, S_full, d_latent]
+        S_full = c_kv.size(1) # type: ignore
+
+        #  3. Multiply q_c with updated KV cache
+        v_c = q_c @ c_kv.transpose(1, 2) # [B, S, d_latent] * [B, d_latent, S_full] = [B, S, S_full] # type: ignore
+
+        # Phase 2: RoPE
+        #  4. Compute k_r
+        head_kr = self.w_kr(c_kv) # [B, S_full, d_latent] * [d_latent, head_width] = [B, S_full, head_width]
+        shared_kr = apply_rope(head_kr)
+
+        return shared_kr, c_kv
+
+        ### STOP HERE
 
         # [B, num_heads, S, S_full]
         attention_scores = torch.zeros([B, self.num_heads, S, S_full], device=x.device) # new attention scores only
@@ -333,12 +464,12 @@ if __name__ == "__main__":
     )  # should output "Hello, I am Featureiman Byeswickattribute argue"
 
 
-# In[7]:
+# In[ ]:
 
 
 import urllib.request
 import torch.optim as optim
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import DataLoader
 from functools import partial
 import training
 
@@ -481,7 +612,7 @@ model = DeepSeekModel(cfg=DeepSeekSmall)
 train_verdict(model)
 
 
-# In[10]:
+# In[9]:
 
 
 def text_to_token_ids(
@@ -513,10 +644,4 @@ def trained_example(model: DeepSeekModel, start_context):
 
 model.to(gpt.get_device())
 trained_example(model, "He never")
-
-
-# In[ ]:
-
-
-
 
