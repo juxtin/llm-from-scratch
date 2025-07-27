@@ -62,7 +62,7 @@
 # a naive KV caching strategy is great for smaller models, but it doesn't scale well to larger sizes. For
 # that, we'll need to get much more clever about it.
 
-# In[3]:
+# In[1]:
 
 
 import torch
@@ -171,37 +171,50 @@ class MultiHeadLatentAttentionV1(nn.Module):
 # 
 #   - where $\theta_i$ is a frequency-based position angle.
 
-# In[93]:
+# In[3]:
 
 
-def apply_rope(x: torch.Tensor, base: int = 10_000) -> torch.Tensor:
-    """
-    Applies a rotation pair-wise to the final dimension of x (taken to be a
-    tensor of [batch, seq, head_dim]) to encode positional information to the
-    tokens.
-    """
-    B, S, D = x.shape
-    k = torch.arange(D//2, device=x.device, dtype=x.dtype) # [1, D//2]
-    positions = torch.arange(S, device=x.device, dtype=x.dtype) # [1, S]
-    freqs = base ** (- (2 * k) / D) # [1, D//2]
-    angles = torch.outer(positions, freqs) # [S, D//2]
+class RoPE(nn.Module):
+    def __init__(self, head_dim: int, context_length: int, base: int = 10_000):
+        super().__init__()
+        D = head_dim
+        k = torch.arange(D//2) # [1, D//2]
+        positions = torch.arange(context_length) # [1, context_length]
+        freqs = base ** (- (2 * k) / D) # [1, D//2]
+        angles = torch.outer(positions, freqs) # [context_length, D//2]
+        self.register_buffer(
+            "sin",
+            torch.sin(angles) # [context_length, D//2]
+        )
+        self.register_buffer(
+            "cos",
+            torch.cos(angles) # [context_length, D//2]
+        ) 
 
-    sin = torch.sin(angles).unsqueeze(0) # [1, S, D//2]
-    cos = torch.cos(angles).unsqueeze(0) # [1, S, D//2]
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Applies a rotation pair-wise to the final dimension of x (taken to be a
+        tensor of [batch, seq, head_dim]) to encode positional information to the
+        tokens.
+        """
+        B, S, D = x.shape
 
-    x_even = x[..., 0::2] # [B, S, D//2]
-    x_odd = x[..., 1::2] # [B, S, D//2]
+        x_even = x[..., 0::2] # [B, S, D//2]
+        x_odd = x[..., 1::2] # [B, S, D//2]
 
-    x_rotated = torch.empty_like(x)
-    x_rotated[..., 0::2] = x_even * cos - x_odd * sin
-    x_rotated[..., 1::2] = x_even * sin + x_odd * cos
+        sin = self.sin[:S, :]
+        cos = self.cos[:S, :]
 
-    return x_rotated
+        x_rotated = torch.empty_like(x)
+        x_rotated[..., 0::2] = x_even * cos - x_odd * sin
+        x_rotated[..., 1::2] = x_even * sin + x_odd * cos
+
+        return x_rotated
 
 
 # 
 
-# In[ ]:
+# In[4]:
 
 
 class MultiHeadLatentAttentionWithRoPE(nn.Module):
@@ -212,6 +225,8 @@ class MultiHeadLatentAttentionWithRoPE(nn.Module):
         d_latent: int,    # the latent dimension
         num_heads: int,
         context_length: int,
+        rope_k: Optional[RoPE] = None,
+        rope_q: Optional[RoPE] = None, 
     ):
         super().__init__()
         if emb_dim % num_heads != 0:
@@ -231,6 +246,8 @@ class MultiHeadLatentAttentionWithRoPE(nn.Module):
         self.w_uq = nn.Linear(d_latent, emb_dim, bias=False)  # [emb_dim, d_latent]
 
         # RoPE
+        self.rope_k = rope_k or RoPE(self.head_width, context_length=context_length)
+        self.rope_q = rope_q or RoPE(self.emb_dim, context_length=context_length)
         self.w_kr = nn.Linear(d_latent, self.head_width, bias=False)  # [head_width, d_latent]
         self.w_qr = nn.Linear(d_latent, emb_dim, bias=False)  # [emb_dim, d_latent]
 
@@ -249,7 +266,10 @@ class MultiHeadLatentAttentionWithRoPE(nn.Module):
         )
         self.mask: torch.Tensor
 
-    def forward(self, x: torch.Tensor, c_kv: Optional[torch.Tensor] = None) -> tuple[torch.Tensor, torch.Tensor]:
+    def forward(self, x: torch.Tensor, c_kv: Optional[torch.Tensor] = None, k_r: Optional[torch.Tensor] = None) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """
+        Returns (logits, c_kv, k_r)
+        """
         B, S, D = x.shape # Batch, Sequence, Dimension (embedding)
 
         # Phase 1: No RoPE
@@ -263,22 +283,29 @@ class MultiHeadLatentAttentionWithRoPE(nn.Module):
             c_kv = new_kv_rows
         else:
             c_kv = torch.cat([c_kv, new_kv_rows], dim=1) # [B, S_full, d_latent]
-        S_full = c_kv.size(1) # type: ignore
+        assert c_kv is not None
+        S_full = c_kv.size(1)
 
         #  3. Multiply q_c with updated KV cache
-        c_attn_scores = q_c @ c_kv.transpose(1, 2) # [B, S, d_latent] * [B, d_latent, S_full] = [B, S, S_full] # type: ignore
+        c_attn_scores = q_c @ c_kv.transpose(1, 2) # [B, S, d_latent] * [B, d_latent, S_full] = [B, S, S_full]
 
         # Phase 2: RoPE
-        #  4. Compute k_r
-        head_kr = self.w_kr(c_kv) # [B, S_full, d_latent] * [d_latent, head_width] = [B, S_full, head_width]
-        shared_kr = apply_rope(head_kr)
-        k_r = shared_kr.repeat(1, 1, self.num_heads) # [B, S_full, emb_dim]
-        # TODO: cache k_r? replicate it to other blocks somehow?
+        #  4. Compute k_r, taking the cache into account
+        if k_r is None:
+            head_kr = self.w_kr(c_kv) # [B, S_full, d_latent] * [d_latent, head_width] = [B, S_full, head_width]
+            shared_kr = self.rope_k(head_kr)
+            k_r = shared_kr.repeat(1, 1, self.num_heads) # [B, S_full, emb_dim]
+        else:
+            new_head_kr = self.w_kr(new_kv_rows)
+            new_shared_kr = self.rope_k(new_head_kr)
+            new_k_r = new_shared_kr.repeat(1, 1, self.num_heads)
+            k_r = torch.cat([k_r, new_k_r], dim=1)
+        assert k_r is not None
 
         #  5. Compute q_r
         c_q = self.w_dq(x)
         full_qr = self.w_qr(c_q)
-        q_r = apply_rope(full_qr) # [B, S, emb_dim]
+        q_r = self.rope_q(full_qr) # [B, S, emb_dim]
 
         #  6. Calculate the rotated attention scores
         ro_attn_scores = q_r @ k_r.transpose(1, 2) # [B, S, S_full]
@@ -287,6 +314,7 @@ class MultiHeadLatentAttentionWithRoPE(nn.Module):
         #  7. Add both attention score vectors and add causal mask
         attn_scores = c_attn_scores + ro_attn_scores # [B, S, S_full]
         mask = self.mask[:S_full, :S_full]
+        mask = mask[-S:, :] # not so sure about this
         attn_scores = attn_scores.masked_fill(mask == 1, float("-inf"))
 
         #  8. Compute the attention weights
@@ -303,11 +331,13 @@ class MultiHeadLatentAttentionWithRoPE(nn.Module):
 
         #  11. Compute the final attention logits
         logits = self.w_out(context_vector)
+        if not self.training:
+            logits = logits[:, -1:, :] # during inference we only need the last token
 
-        return logits, c_kv
+        return logits, c_kv, k_r
 
 
-# In[3]:
+# In[5]:
 
 
 import sys
@@ -332,7 +362,7 @@ DeepSeekSmall: DeepSeekConfigDict = {
 }
 
 
-# In[4]:
+# In[6]:
 
 
 class DeepSeekTransformerBlock(nn.Module):
@@ -340,15 +370,17 @@ class DeepSeekTransformerBlock(nn.Module):
     A single DeepSeek transformer block.
     """
 
-    def __init__(self, cfg: DeepSeekConfigDict):
+    def __init__(self, cfg: DeepSeekConfigDict, rope_k: Optional[RoPE] = None, rope_q: Optional[RoPE] = None):
         super().__init__()
         self.clear() # to init the cache values
         self.layer_norm_1 = gpt.LayerNorm(cfg["emb_dim"])
-        self.attention = MultiHeadLatentAttentionV1(
+        self.attention = MultiHeadLatentAttentionWithRoPE(
             emb_dim=cfg["emb_dim"],
             d_latent=cfg["latent_dim"],
-            context_length=cfg["context_length"],
             num_heads=cfg["n_heads"],
+            context_length=cfg["context_length"],
+            rope_k=rope_k,
+            rope_q=rope_q,
         )
         self.drop_rate = cfg["drop_rate"]
         self.layer_norm_2 = gpt.LayerNorm(cfg["emb_dim"])
@@ -357,19 +389,21 @@ class DeepSeekTransformerBlock(nn.Module):
 
     def clear(self):
         self.c_kv = None
-        self.past_tokens = 0
+        self.k_r = None
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         shortcut = x
         x = self.layer_norm_1(x)
         if self.training:
-            x, _ = self.attention(x, c_kv=None, past_tokens=0)
+            x, _, _ = self.attention(x, c_kv=None, k_r=None)
             self.c_kv = None
+            self.k_r = None
         else:
-            x, c_kv = self.attention(x, c_kv=self.c_kv, past_tokens=self.past_tokens)
+            x, c_kv, k_r = self.attention(x, c_kv=self.c_kv, k_r=self.k_r)
             c_kv = c_kv.detach()
             self.c_kv = c_kv
-            self.past_tokens += x.size(1)
+            k_r = k_r.detach()
+            self.k_r = k_r
         x = self.dropout(x)
         x = x + shortcut
 
@@ -381,7 +415,7 @@ class DeepSeekTransformerBlock(nn.Module):
         return x
 
 
-# In[5]:
+# In[7]:
 
 
 class ClearableSequential(nn.Sequential):
@@ -403,10 +437,15 @@ class DeepSeekModel(nn.Module):
         super().__init__()
         self.cfg = cfg
         self.token_embedding = nn.Embedding(cfg["vocab_size"], cfg["emb_dim"])
-        self.positional_embedding = nn.Embedding(cfg["context_length"], cfg["emb_dim"])
         self.dropout = nn.Dropout(cfg["drop_rate"])
+
+        # MLA allows us to share these objects for efficiency
+        head_width = cfg["emb_dim"] // cfg["n_heads"]
+        rope_k = RoPE(head_width, context_length=cfg["context_length"])
+        rope_q = RoPE(cfg["emb_dim"], context_length=cfg["context_length"])
+
         self.transformer_blocks = ClearableSequential(
-            *[DeepSeekTransformerBlock(cfg) for _ in range(cfg["n_layers"])]
+            *[DeepSeekTransformerBlock(cfg, rope_k=rope_k, rope_q=rope_q) for _ in range(cfg["n_layers"])]
         )
         self.layer_norm = gpt.LayerNorm(cfg["emb_dim"])
         self.output = nn.Linear(cfg["emb_dim"], cfg["vocab_size"], bias=False)
@@ -417,13 +456,7 @@ class DeepSeekModel(nn.Module):
     def forward(self, in_idx: torch.Tensor) -> torch.Tensor:
         """Forward pass: input indices to logits."""
         batch_size, sequence_length = in_idx.shape
-        token_embeddings = self.token_embedding(in_idx)
-        positional_embeddings = self.positional_embedding(
-            # get the first N positional embeddings, where N is the sequence length
-            torch.arange(sequence_length, device=in_idx.device)
-        )
-
-        x = token_embeddings + positional_embeddings
+        x = self.token_embedding(in_idx)
         x = self.dropout(x)
         x = self.transformer_blocks(x)
         x = self.layer_norm(x)
@@ -434,7 +467,7 @@ class DeepSeekModel(nn.Module):
         return next(self.parameters()).device
 
 
-# In[6]:
+# In[8]:
 
 
 import tiktoken
@@ -479,7 +512,7 @@ if __name__ == "__main__":
     )  # should output "Hello, I am Featureiman Byeswickattribute argue"
 
 
-# In[ ]:
+# In[9]:
 
 
 import urllib.request
@@ -619,7 +652,7 @@ def train_verdict(model: DeepSeekModel) -> float:
     return train_simple_text(model=model, text=text, cfg=verdict_training_config)
 
 
-# In[8]:
+# In[10]:
 
 
 model = DeepSeekModel(cfg=DeepSeekSmall)
@@ -627,7 +660,7 @@ model = DeepSeekModel(cfg=DeepSeekSmall)
 train_verdict(model)
 
 
-# In[9]:
+# In[17]:
 
 
 def text_to_token_ids(
@@ -661,7 +694,7 @@ model.to(gpt.get_device())
 trained_example(model, "He never")
 
 
-# In[129]:
+# In[16]:
 
 
 emb_dim = 8
@@ -679,8 +712,10 @@ attn = MultiHeadLatentAttentionWithRoPE(
     context_length=context_length,
 )
 
-res, cache = attn(x, c_kv)
-res.shape
+res, c_kv, k_r = attn(x, c_kv)
+print(f"res: {res.shape}")
+print(f"c_kv: {c_kv.shape}")
+print(f"k_r: {k_r.shape}")
 
 
 # In[ ]:
