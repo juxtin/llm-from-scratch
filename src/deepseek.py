@@ -62,7 +62,7 @@
 # a naive KV caching strategy is great for smaller models, but it doesn't scale well to larger sizes. For
 # that, we'll need to get much more clever about it.
 
-# In[1]:
+# In[5]:
 
 
 import torch
@@ -71,7 +71,14 @@ import torch.nn.functional as F
 from typing import Optional
 
 
-# In[2]:
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path().resolve().parent / "src"))
+import gpt
+
+
+# In[6]:
 
 
 class MultiHeadLatentAttentionV1(nn.Module):
@@ -171,7 +178,7 @@ class MultiHeadLatentAttentionV1(nn.Module):
 # 
 #   - where $\theta_i$ is a frequency-based position angle.
 
-# In[3]:
+# In[7]:
 
 
 class RoPE(nn.Module):
@@ -214,7 +221,7 @@ class RoPE(nn.Module):
 
 # 
 
-# In[4]:
+# In[8]:
 
 
 class MultiHeadLatentAttentionWithRoPE(nn.Module):
@@ -337,15 +344,94 @@ class MultiHeadLatentAttentionWithRoPE(nn.Module):
         return logits, c_kv, k_r
 
 
-# In[5]:
+# In[9]:
 
 
-import sys
-from pathlib import Path
+class Expert(nn.Module):
+    def __init__(self, emb_dim: int, dropout: float = 0.1):
+        super().__init__()
+        self.layer = nn.Sequential(
+            nn.Linear(emb_dim, 4*emb_dim, bias=False),
+            gpt.GELU(),
+            nn.Linear(4*emb_dim, emb_dim, bias=False),
+            nn.Dropout(dropout)
+        )
 
-sys.path.insert(0, str(Path().resolve().parent / "src"))
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.layer(x)
 
-import gpt
+
+# In[10]:
+
+
+class NoisyTopKRouter(nn.Module):
+    def __init__(self, n_experts: int, top_k: int, emb_dim: int):
+        super().__init__()
+        self.n_experts = n_experts
+        self.top_k = top_k
+        self.routing = nn.Linear(emb_dim, n_experts, bias=False)
+        self.noise_linear = nn.Linear(emb_dim, n_experts, bias=False)
+
+    def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        logits = self.routing(x)
+        if self.training:
+            noise_logits = self.noise_linear(x)
+            noise = torch.randn_like(logits)*F.softplus(noise_logits)
+            noisy_logits = logits + noise
+        else:
+            noisy_logits = logits
+        top_k_experts, top_k_indices = noisy_logits.topk(self.top_k, dim=-1)
+        routing = torch.full_like(noisy_logits, float('-inf')).scatter_(-1, top_k_indices, top_k_experts)
+        expert_selector_weight_matrix = F.softmax(routing, dim=-1)
+        return (expert_selector_weight_matrix, top_k_indices)
+
+
+# In[38]:
+
+
+class SparseMoE(nn.Module):
+    def __init__(self, emb_dim: int, n_experts: int, top_k: int, dropout: float = 0.1):
+        super().__init__()
+        self.top_k = top_k
+        self.router = NoisyTopKRouter(n_experts=n_experts, top_k=top_k, emb_dim=emb_dim)
+        self.experts = nn.ModuleList([
+            Expert(emb_dim=emb_dim, dropout=dropout) for _ in range(n_experts)
+        ])
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        gating_output, indices = self.router(x)
+        final_output = torch.zeros_like(x)
+
+        # Reshape inputs for batch processing
+        flat_x = x.view(-1, x.size(-1))
+        flat_gating_output = gating_output.view(-1, gating_output.size(-1))
+
+        for i, expert in enumerate(self.experts):
+            expert_mask = (indices == i).any(dim=-1)
+            flat_mask = expert_mask.view(-1)
+
+            if flat_mask.any():
+                expert_input = flat_x[flat_mask]
+                expert_output = expert(expert_input)
+
+                # extract and apply gating scores
+                gating_scores = flat_gating_output[flat_mask, i].unsqueeze(1)
+                weighted_output = expert_output * gating_scores
+
+                # update the final output matrix
+                final_output[expert_mask] += weighted_output.squeeze(1)
+
+        return final_output
+
+
+# In[ ]:
+
+
+
+
+
+# In[12]:
+
 
 class DeepSeekConfigDict(gpt.GPTConfigDict):
     latent_dim: int # the size of the latent cache in MLA
@@ -362,7 +448,7 @@ DeepSeekSmall: DeepSeekConfigDict = {
 }
 
 
-# In[6]:
+# In[40]:
 
 
 class DeepSeekTransformerBlock(nn.Module):
@@ -384,7 +470,8 @@ class DeepSeekTransformerBlock(nn.Module):
         )
         self.drop_rate = cfg["drop_rate"]
         self.layer_norm_2 = gpt.LayerNorm(cfg["emb_dim"])
-        self.feedforward = gpt.FeedForward(cfg)
+        num_experts = max(4, cfg["emb_dim"] // 256)
+        self.feedforward = SparseMoE(emb_dim=cfg["emb_dim"], n_experts=num_experts, top_k=2)
         self.dropout = nn.Dropout(self.drop_rate)
 
     def clear(self):
@@ -415,7 +502,7 @@ class DeepSeekTransformerBlock(nn.Module):
         return x
 
 
-# In[7]:
+# In[41]:
 
 
 class ClearableSequential(nn.Sequential):
@@ -467,7 +554,7 @@ class DeepSeekModel(nn.Module):
         return next(self.parameters()).device
 
 
-# In[8]:
+# In[42]:
 
 
 import tiktoken
@@ -512,7 +599,7 @@ if __name__ == "__main__":
     )  # should output "Hello, I am Featureiman Byeswickattribute argue"
 
 
-# In[9]:
+# In[44]:
 
 
 import urllib.request
@@ -643,24 +730,25 @@ def train_simple_text(model: DeepSeekModel, text: str, cfg: training.TrainingCon
         return validation_loss
 
 
-def train_verdict(model: DeepSeekModel) -> float:
+def train_verdict(model: DeepSeekModel, epochs: int = 10) -> float:
     torch.manual_seed(123)
     text = the_verdict()
     verdict_training_config = training.new_training_config(
-        train_percent=0.85, peak_lr=5e-4, max_length=256, epochs=10
+        train_percent=0.85, peak_lr=5e-4, max_length=256, epochs=epochs
     )
     return train_simple_text(model=model, text=text, cfg=verdict_training_config)
 
 
-# In[10]:
+# In[ ]:
 
 
 model = DeepSeekModel(cfg=DeepSeekSmall)
+model.to(gpt.get_device())
 
-train_verdict(model)
+train_verdict(model, epochs=50)
 
 
-# In[17]:
+# In[ ]:
 
 
 def text_to_token_ids(
@@ -676,7 +764,7 @@ def token_ids_to_text(token_ids: torch.Tensor, tokenizer: tiktoken.Encoding) -> 
     return tokenizer.decode(flat.tolist())
 
 
-def trained_example(model: DeepSeekModel, start_context):
+def trained_example(model: DeepSeekModel, start_context, new_tokens = 10):
     torch.manual_seed(123)
     model.eval()
     tokenizer = tiktoken.get_encoding("gpt2")
@@ -684,38 +772,42 @@ def trained_example(model: DeepSeekModel, start_context):
     token_ids = gpt.generate_text_simple(
         model=model,
         idx=text_to_token_ids(start_context, tokenizer),
-        max_new_tokens=10,
+        max_new_tokens=new_tokens,
         context_size=128,
     )
 
     print("Output text (trained):\n", token_ids_to_text(token_ids, tokenizer))
 
 model.to(gpt.get_device())
-trained_example(model, "He never")
+trained_example(model, "He never", new_tokens=26)
 
 
-# In[16]:
+# In[39]:
 
 
-emb_dim = 8
-d_latent = 4
-num_heads = 2
-context_length = 512
+emb_dim = 16
+dropout = 0
+n_experts = 4
+top_k = 2
 
-c_kv = torch.rand(1, 4, d_latent)
-x = torch.rand(1, 1, emb_dim)
+x = torch.rand(1, 5, emb_dim)
 
-attn = MultiHeadLatentAttentionWithRoPE(
-    emb_dim=emb_dim,
-    d_latent=d_latent,
-    num_heads=num_heads,
-    context_length=context_length,
-)
+moe = SparseMoE(emb_dim=emb_dim, n_experts=6, top_k=2)
+res = moe(x)
+res
 
-res, c_kv, k_r = attn(x, c_kv)
-print(f"res: {res.shape}")
-print(f"c_kv: {c_kv.shape}")
-print(f"k_r: {k_r.shape}")
+
+# In[30]:
+
+
+x = torch.rand(2, 5, emb_dim)
+x.shape
+
+
+# In[32]:
+
+
+
 
 
 # In[ ]:
