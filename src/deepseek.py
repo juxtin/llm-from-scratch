@@ -78,96 +78,6 @@ sys.path.insert(0, str(Path().resolve().parent / "src"))
 import gpt
 
 
-# In[6]:
-
-
-class MultiHeadLatentAttentionV1(nn.Module):
-    """A simple implementation of multi-head latent attention with low-rank
-    key-value joint compression."""
-    def __init__(
-        self,
-        emb_dim: int, # the embedding dimension
-        d_latent: int,    # the latent dimension
-        context_length: int,
-        num_heads: int,
-    ):
-        super().__init__()
-        if emb_dim % num_heads != 0:
-            raise ValueError("The number of heads must evenly divide d_out.")
-        self.context_length = context_length
-        self.emb_dim = emb_dim
-        self.d_latent = d_latent
-        self.num_heads = num_heads
-        self.head_width = emb_dim // num_heads
-
-        # For now, the query weights are classic flavor
-        self.w_query = nn.Linear(emb_dim, emb_dim, bias=False) # [emb_dim, emb_dim]
-
-        # The latent stuff
-        self.w_dkv = nn.Linear(emb_dim, d_latent, bias=False) # [d_latent, emb_dim]
-        self.w_uk = nn.Linear(d_latent, emb_dim, bias=False)  # [emb_dim, d_latent]
-        self.w_uv = nn.Linear(d_latent, emb_dim, bias=False)  # [emb_dim, d_latent]
-        # and the output projection, also trainable.
-        self.w_out = nn.Linear(emb_dim, emb_dim, bias=False) # [emb_dim, emb_dim]
-
-        # We have our own LayerNorm now, unlike in GPT
-        self.ln = nn.LayerNorm(d_latent)
-
-        # save a place for the absorbed K (w_query @ w_uk)
-        self.register_buffer("absorbed_k", None)
-
-    def forward(
-        self, x: torch.Tensor, c_kv: Optional[torch.Tensor] = None, past_tokens: int = 0
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        assert(past_tokens < self.context_length)
-        B, S, D = x.shape # Batch, Sequence, Dimension (embedding)
-        if self.absorbed_k is None:
-            # [emb_dim, emb_dim] * [emb_dim, d_latent] = [emb_dim, d_latent] -> [num_heads, head_width, d_latent]
-            self.absorbed_k = torch.matmul(self.w_query.weight, self.w_uk.weight).view(self.num_heads, self.head_width, self.d_latent).detach()
-
-        new_kv_rows = self.ln(self.w_dkv(x)) # [B, S, emb_dim] * [emb_dim, d_latent] = [B, S, d_latent]
-        if c_kv is None:
-            c_kv = new_kv_rows
-        else:
-            c_kv = torch.cat([c_kv, new_kv_rows], dim=1) # [B, S_full, d_latent]
-            # Ensure that we didn't just create a C_kv that is too long
-            excess = c_kv.size(1) - self.context_length
-            if excess > 0:
-                c_kv = c_kv[:, excess:, :]
-        S_full = c_kv.size(1) # type: ignore
-
-        # [B, S_full, d_latent] * [d_latent, emb_dim] = [B, S_full, emb_dim] -> [B, num_heads, S_full, head_width]
-        values = self.w_uv(c_kv).view(B, S_full, self.num_heads, self.head_width).transpose(1, 2)
-        # [B, S, num_heads, head_width]
-        queries = x.view(B, S, self.num_heads, self.head_width) # no unique queries var because of absorbed_k
-        # NOTE: no keys variable because of absorbed_k
-
-        # [B, num_heads, S, S_full]
-        attention_scores = torch.zeros([B, self.num_heads, S, S_full], device=x.device) # new attention scores only
-        for h in range(self.num_heads):
-            # [B, S, head_width] * [head_width, d_latent] = [B, S, d_latent]
-            attention_h = queries[:, :, h] @ self.absorbed_k[h]
-            # (rhs) [B, S, d_latent] * [B, d_latent, S_full] = [B, S, S_full]
-            attention_scores[:, h] = torch.bmm(attention_h, c_kv.transpose(1, 2)) # type: ignore
-
-
-        mask = torch.tril(torch.ones([S, S_full], device=x.device), diagonal=past_tokens)
-        attention_scores = attention_scores.masked_fill(mask.view(1, 1, S, S_full) == 0, float("-inf")) / self.head_width ** 0.5
-        # [B, num_heads, S, S_full]
-        attention_weights = F.softmax(attention_scores, dim=-1)
-
-        out_heads = []
-        for h in range(self.num_heads):
-            # [B, num_heads, S, S_full] * [B, num_heads, S_full, head_width] = [B, S, head_width]
-            context_h = torch.matmul(attention_weights[:, h], values[:, h])
-            out_heads.append(context_h)
-
-        # [B, S, D]
-        out = torch.cat(out_heads, dim=-1)
-
-        return self.w_out(out), c_kv
-
-
 # # RoPE
 # 
 # For each vector $x \in \mathbb{R}^{d}$ at position $i$, produce a rotated version $x^{(i)}$:
@@ -424,13 +334,52 @@ class SparseMoE(nn.Module):
         return final_output
 
 
-# In[ ]:
+# In[120]:
 
 
+class SparseMoEV2(nn.Module):
+    def __init__(self, emb_dim: int, n_experts: int, top_k: int, dropout: float = 0.1):
+        super().__init__()
+        self.top_k = top_k
+        self.router = NoisyTopKRouter(n_experts=n_experts, top_k=top_k, emb_dim=emb_dim)
+        self.n_experts = n_experts
+        self.experts = nn.ModuleList([
+            Expert(emb_dim=emb_dim, dropout=dropout) for _ in range(n_experts)
+        ])
+
+    def forward(self, x: torch.Tensor): # x: [B, S, D]
+        B, S, D = x.shape
+        # gating_output: [B, top_k] (float)
+        # indices: [B, top_k] (int)
+        gating_output, indices = self.router(x)
+        # final_output: [B, S, D]
+        final_output = torch.zeros_like(x)
+
+        # Reshape inputs for batch processing
+        x_flat = x.view(-1, D) # [B*S, D]
+        indices_flat = indices.view(-1, self.top_k) # [B*S, top_k]
+        gating_flat = gating_output.view(-1, self.n_experts) # [B*S, n_experts]
+        final_output_flat = final_output.view(-1, D) # [B*S, D]
+
+        for i, expert in enumerate(self.experts):
+            # Find tokens routed to expert i
+            expert_mask = (indices_flat == i)
+            token_idx, expert_pos = torch.where(expert_mask)
+            if token_idx.numel() == 0:
+                continue
+
+            expert_input = x_flat[token_idx]
+            expert_output = expert(expert_input)
+
+            gating_scores = gating_flat[token_idx, i]
+            weighted_output = expert_output * gating_scores.unsqueeze(-1)
+
+            final_output_flat[token_idx] += weighted_output
+
+        return final_output
 
 
-
-# In[12]:
+# In[121]:
 
 
 class DeepSeekConfigDict(gpt.GPTConfigDict):
@@ -448,7 +397,7 @@ DeepSeekSmall: DeepSeekConfigDict = {
 }
 
 
-# In[40]:
+# In[122]:
 
 
 class DeepSeekTransformerBlock(nn.Module):
@@ -471,7 +420,7 @@ class DeepSeekTransformerBlock(nn.Module):
         self.drop_rate = cfg["drop_rate"]
         self.layer_norm_2 = gpt.LayerNorm(cfg["emb_dim"])
         num_experts = max(4, cfg["emb_dim"] // 256)
-        self.feedforward = SparseMoE(emb_dim=cfg["emb_dim"], n_experts=num_experts, top_k=2)
+        self.feedforward = SparseMoEV2(emb_dim=cfg["emb_dim"], n_experts=num_experts, top_k=2)
         self.dropout = nn.Dropout(self.drop_rate)
 
     def clear(self):
@@ -502,7 +451,7 @@ class DeepSeekTransformerBlock(nn.Module):
         return x
 
 
-# In[41]:
+# In[123]:
 
 
 class ClearableSequential(nn.Sequential):
@@ -554,7 +503,7 @@ class DeepSeekModel(nn.Module):
         return next(self.parameters()).device
 
 
-# In[42]:
+# In[124]:
 
 
 import tiktoken
@@ -599,7 +548,7 @@ if __name__ == "__main__":
     )  # should output "Hello, I am Featureiman Byeswickattribute argue"
 
 
-# In[44]:
+# In[131]:
 
 
 import urllib.request
@@ -710,6 +659,7 @@ def train_simple_text(model: DeepSeekModel, text: str, cfg: training.TrainingCon
         model.parameters(), lr=cfg["peak_lr"], weight_decay=cfg["weight_decay"]
     )
     training_loader, validation_loader = text_training_loaders(text, cfg)
+    last_validation_loss = 0.0
 
     for epoch in range(cfg["epochs"]):
         model.train()
@@ -722,12 +672,16 @@ def train_simple_text(model: DeepSeekModel, text: str, cfg: training.TrainingCon
             optimizer.step()
             model.clear()
 
-    model.eval()
-    if len(validation_loader) == 0:
-        raise ValueError("Ooops, no validation data")
-    with torch.no_grad():
-        validation_loss = calc_loss_loader(model, validation_loader)
-        return validation_loss
+        # calculate the validation loss for this epoch
+        model.eval()
+        if len(validation_loader) == 0:
+            raise ValueError("Ooops, no validation data")
+        with torch.no_grad():
+            validation_loss = calc_loss_loader(model, validation_loader)
+            print(f"Validation loss for epoch {epoch}: {validation_loss}")
+            last_validation_loss = validation_loss
+
+    return last_validation_loss
 
 
 def train_verdict(model: DeepSeekModel, epochs: int = 10) -> float:
@@ -739,16 +693,16 @@ def train_verdict(model: DeepSeekModel, epochs: int = 10) -> float:
     return train_simple_text(model=model, text=text, cfg=verdict_training_config)
 
 
-# In[ ]:
+# In[132]:
 
 
 model = DeepSeekModel(cfg=DeepSeekSmall)
 model.to(gpt.get_device())
 
-train_verdict(model, epochs=50)
+train_verdict(model, epochs=10)
 
 
-# In[ ]:
+# In[134]:
 
 
 def text_to_token_ids(
@@ -778,11 +732,10 @@ def trained_example(model: DeepSeekModel, start_context, new_tokens = 10):
 
     print("Output text (trained):\n", token_ids_to_text(token_ids, tokenizer))
 
-model.to(gpt.get_device())
 trained_example(model, "He never", new_tokens=26)
 
 
-# In[39]:
+# In[119]:
 
 
 emb_dim = 16
@@ -790,24 +743,67 @@ dropout = 0
 n_experts = 4
 top_k = 2
 
-x = torch.rand(1, 5, emb_dim)
-
-moe = SparseMoE(emb_dim=emb_dim, n_experts=6, top_k=2)
-res = moe(x)
-res
-
-
-# In[30]:
-
-
 x = torch.rand(2, 5, emb_dim)
-x.shape
+
+router = NoisyTopKRouter(n_experts=n_experts, top_k=top_k, emb_dim=emb_dim)
+gating_output, indices = router(x)
 
 
-# In[32]:
+# In[102]:
 
 
+gating_output.shape
 
+
+# In[103]:
+
+
+indices.shape
+
+
+# In[94]:
+
+
+moe = SparseMoEV2(emb_dim=emb_dim, n_experts=6, top_k=2)
+res = moe(x)
+
+
+# In[ ]:
+
+
+expert_mask = torch.tensor([[ True,  True,  True,  True, False],
+        [False,  True, False, False, False]])
+
+gating_output = torch.tensor([[
+         [0.0000, 0.0000, 0.5257, 0.0000, 0.0000, 0.4743],
+         [0.0000, 0.0000, 0.6161, 0.0000, 0.0000, 0.3839],
+         [0.4214, 0.0000, 0.0000, 0.0000, 0.5786, 0.0000],
+         [0.0000, 0.3194, 0.0000, 0.0000, 0.0000, 0.6806],
+         [0.0000, 0.0000, 0.7496, 0.0000, 0.0000, 0.2504]],
+
+        [[0.0000, 0.0000, 0.0000, 0.2948, 0.0000, 0.7052],
+         [0.3588, 0.0000, 0.0000, 0.0000, 0.0000, 0.6412],
+         [0.0000, 0.0000, 0.0000, 0.5305, 0.0000, 0.4695],
+         [0.0000, 0.7145, 0.0000, 0.2855, 0.0000, 0.0000],
+         [0.0000, 0.0000, 0.5857, 0.0000, 0.0000, 0.4143]]])
+
+
+# In[99]:
+
+
+gating_output[expert_mask].shape
+
+
+# In[91]:
+
+
+gating_output[0, 0]
+
+
+# In[92]:
+
+
+gating_output
 
 
 # In[ ]:
