@@ -334,15 +334,18 @@ class SparseMoE(nn.Module):
         return final_output
 
 
-# In[120]:
+# In[135]:
 
 
 class SparseMoEV2(nn.Module):
-    def __init__(self, emb_dim: int, n_experts: int, top_k: int, dropout: float = 0.1):
+    def __init__(self, emb_dim: int, n_experts: int, shared_experts: int, top_k: int, dropout: float = 0.1):
         super().__init__()
         self.top_k = top_k
         self.router = NoisyTopKRouter(n_experts=n_experts, top_k=top_k, emb_dim=emb_dim)
         self.n_experts = n_experts
+        self.shared_experts = nn.ModuleList([
+            Expert(emb_dim=emb_dim, dropout=dropout) for _ in range(shared_experts)
+        ])
         self.experts = nn.ModuleList([
             Expert(emb_dim=emb_dim, dropout=dropout) for _ in range(n_experts)
         ])
@@ -361,6 +364,10 @@ class SparseMoEV2(nn.Module):
         gating_flat = gating_output.view(-1, self.n_experts) # [B*S, n_experts]
         final_output_flat = final_output.view(-1, D) # [B*S, D]
 
+        for i, expert in enumerate(self.shared_experts):
+            expert_output = expert(x_flat)
+            final_output_flat += expert_output
+
         for i, expert in enumerate(self.experts):
             # Find tokens routed to expert i
             expert_mask = (indices_flat == i)
@@ -376,10 +383,10 @@ class SparseMoEV2(nn.Module):
 
             final_output_flat[token_idx] += weighted_output
 
-        return final_output
+        return final_output_flat.view(B, S, D)
 
 
-# In[121]:
+# In[136]:
 
 
 class DeepSeekConfigDict(gpt.GPTConfigDict):
@@ -397,7 +404,7 @@ DeepSeekSmall: DeepSeekConfigDict = {
 }
 
 
-# In[122]:
+# In[138]:
 
 
 class DeepSeekTransformerBlock(nn.Module):
@@ -420,7 +427,7 @@ class DeepSeekTransformerBlock(nn.Module):
         self.drop_rate = cfg["drop_rate"]
         self.layer_norm_2 = gpt.LayerNorm(cfg["emb_dim"])
         num_experts = max(4, cfg["emb_dim"] // 256)
-        self.feedforward = SparseMoEV2(emb_dim=cfg["emb_dim"], n_experts=num_experts, top_k=2)
+        self.feedforward = SparseMoEV2(emb_dim=cfg["emb_dim"], n_experts=num_experts, shared_experts=1, top_k=2)
         self.dropout = nn.Dropout(self.drop_rate)
 
     def clear(self):
@@ -451,7 +458,7 @@ class DeepSeekTransformerBlock(nn.Module):
         return x
 
 
-# In[123]:
+# In[139]:
 
 
 class ClearableSequential(nn.Sequential):
@@ -503,7 +510,7 @@ class DeepSeekModel(nn.Module):
         return next(self.parameters()).device
 
 
-# In[124]:
+# In[140]:
 
 
 import tiktoken
@@ -548,7 +555,7 @@ if __name__ == "__main__":
     )  # should output "Hello, I am Featureiman Byeswickattribute argue"
 
 
-# In[131]:
+# In[141]:
 
 
 import urllib.request
@@ -693,7 +700,7 @@ def train_verdict(model: DeepSeekModel, epochs: int = 10) -> float:
     return train_simple_text(model=model, text=text, cfg=verdict_training_config)
 
 
-# In[132]:
+# In[142]:
 
 
 model = DeepSeekModel(cfg=DeepSeekSmall)
@@ -702,7 +709,7 @@ model.to(gpt.get_device())
 train_verdict(model, epochs=10)
 
 
-# In[134]:
+# In[151]:
 
 
 def text_to_token_ids(
@@ -721,6 +728,7 @@ def token_ids_to_text(token_ids: torch.Tensor, tokenizer: tiktoken.Encoding) -> 
 def trained_example(model: DeepSeekModel, start_context, new_tokens = 10):
     torch.manual_seed(123)
     model.eval()
+    model.clear()
     tokenizer = tiktoken.get_encoding("gpt2")
 
     token_ids = gpt.generate_text_simple(
@@ -732,78 +740,7 @@ def trained_example(model: DeepSeekModel, start_context, new_tokens = 10):
 
     print("Output text (trained):\n", token_ids_to_text(token_ids, tokenizer))
 
-trained_example(model, "He never", new_tokens=26)
-
-
-# In[119]:
-
-
-emb_dim = 16
-dropout = 0
-n_experts = 4
-top_k = 2
-
-x = torch.rand(2, 5, emb_dim)
-
-router = NoisyTopKRouter(n_experts=n_experts, top_k=top_k, emb_dim=emb_dim)
-gating_output, indices = router(x)
-
-
-# In[102]:
-
-
-gating_output.shape
-
-
-# In[103]:
-
-
-indices.shape
-
-
-# In[94]:
-
-
-moe = SparseMoEV2(emb_dim=emb_dim, n_experts=6, top_k=2)
-res = moe(x)
-
-
-# In[ ]:
-
-
-expert_mask = torch.tensor([[ True,  True,  True,  True, False],
-        [False,  True, False, False, False]])
-
-gating_output = torch.tensor([[
-         [0.0000, 0.0000, 0.5257, 0.0000, 0.0000, 0.4743],
-         [0.0000, 0.0000, 0.6161, 0.0000, 0.0000, 0.3839],
-         [0.4214, 0.0000, 0.0000, 0.0000, 0.5786, 0.0000],
-         [0.0000, 0.3194, 0.0000, 0.0000, 0.0000, 0.6806],
-         [0.0000, 0.0000, 0.7496, 0.0000, 0.0000, 0.2504]],
-
-        [[0.0000, 0.0000, 0.0000, 0.2948, 0.0000, 0.7052],
-         [0.3588, 0.0000, 0.0000, 0.0000, 0.0000, 0.6412],
-         [0.0000, 0.0000, 0.0000, 0.5305, 0.0000, 0.4695],
-         [0.0000, 0.7145, 0.0000, 0.2855, 0.0000, 0.0000],
-         [0.0000, 0.0000, 0.5857, 0.0000, 0.0000, 0.4143]]])
-
-
-# In[99]:
-
-
-gating_output[expert_mask].shape
-
-
-# In[91]:
-
-
-gating_output[0, 0]
-
-
-# In[92]:
-
-
-gating_output
+trained_example(model, "He said,", new_tokens=26)
 
 
 # In[ ]:
