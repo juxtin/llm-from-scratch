@@ -62,7 +62,7 @@
 # a naive KV caching strategy is great for smaller models, but it doesn't scale well to larger sizes. For
 # that, we'll need to get much more clever about it.
 
-# In[5]:
+# In[34]:
 
 
 import torch
@@ -88,7 +88,7 @@ import gpt
 # 
 #   - where $\theta_i$ is a frequency-based position angle.
 
-# In[7]:
+# In[35]:
 
 
 class RoPE(nn.Module):
@@ -131,7 +131,7 @@ class RoPE(nn.Module):
 
 # 
 
-# In[8]:
+# In[36]:
 
 
 class MultiHeadLatentAttentionWithRoPE(nn.Module):
@@ -254,16 +254,18 @@ class MultiHeadLatentAttentionWithRoPE(nn.Module):
         return logits, c_kv, k_r
 
 
-# In[9]:
+# In[37]:
 
 
 class Expert(nn.Module):
-    def __init__(self, emb_dim: int, dropout: float = 0.1):
+    def __init__(self, emb_dim: int, hidden_dim: int = 0, dropout: float = 0.1):
         super().__init__()
+        if hidden_dim == 0:
+            hidden_dim = emb_dim * 4
         self.layer = nn.Sequential(
-            nn.Linear(emb_dim, 4*emb_dim, bias=False),
+            nn.Linear(emb_dim, hidden_dim, bias=False),
             gpt.GELU(),
-            nn.Linear(4*emb_dim, emb_dim, bias=False),
+            nn.Linear(hidden_dim, emb_dim, bias=False),
             nn.Dropout(dropout)
         )
 
@@ -271,7 +273,7 @@ class Expert(nn.Module):
         return self.layer(x)
 
 
-# In[10]:
+# In[38]:
 
 
 class NoisyTopKRouter(nn.Module):
@@ -296,7 +298,7 @@ class NoisyTopKRouter(nn.Module):
         return (expert_selector_weight_matrix, top_k_indices)
 
 
-# In[38]:
+# In[39]:
 
 
 class SparseMoE(nn.Module):
@@ -334,7 +336,7 @@ class SparseMoE(nn.Module):
         return final_output
 
 
-# In[135]:
+# In[40]:
 
 
 class SparseMoEV2(nn.Module):
@@ -386,7 +388,109 @@ class SparseMoEV2(nn.Module):
         return final_output_flat.view(B, S, D)
 
 
-# In[136]:
+# In[41]:
+
+
+class SparseMoEV3(nn.Module):
+    def __init__(self, emb_dim: int, n_experts: int, top_k: int, dropout: float = 0.1):
+        super().__init__()
+        self.top_k = top_k
+        self.router = NoisyTopKRouter(n_experts=n_experts, top_k=top_k, emb_dim=emb_dim)
+        self.n_experts = n_experts
+        self.shared_expert = Expert(emb_dim=emb_dim, dropout=dropout)
+        self.experts = nn.ModuleList([
+            Expert(emb_dim=emb_dim, dropout=dropout) for _ in range(n_experts)
+        ])
+
+    def forward(self, x: torch.Tensor): # x: [B, S, D]
+        B, S, D = x.shape
+        # gating_output: [B, top_k] (float)
+        # indices: [B, top_k] (int)
+        gating_output, indices = self.router(x)
+        # final_output: [B, S, D]
+        final_output = torch.zeros_like(x)
+
+        # Reshape inputs for batch processing
+        x_flat = x.view(-1, D) # [B*S, D]
+        indices_flat = indices.view(-1, self.top_k) # [B*S, top_k]
+        gating_flat = gating_output.view(-1, self.n_experts) # [B*S, n_experts]
+        final_output_flat = final_output.view(-1, D) # [B*S, D]
+
+        # Get the shared expert output and add it to the result
+        shared_expert_output = self.shared_expert(x_flat)
+        final_output_flat += shared_expert_output
+
+        for i, expert in enumerate(self.experts):
+            # Find tokens routed to expert i
+            expert_mask = (indices_flat == i)
+            token_idx, expert_pos = torch.where(expert_mask)
+            if token_idx.numel() == 0:
+                continue
+
+            expert_input = x_flat[token_idx]
+            expert_output = expert(expert_input)
+
+            gating_scores = gating_flat[token_idx, i]
+            weighted_output = expert_output * gating_scores.unsqueeze(-1)
+
+            final_output_flat[token_idx] += weighted_output
+
+        return final_output_flat.view(B, S, D)
+
+
+# In[47]:
+
+
+class FineGrainedMoE(nn.Module):
+    def __init__(self, emb_dim: int, n_experts: int, expert_m: int, top_k: int, dropout: float = 0.1):
+        super().__init__()
+        if emb_dim % expert_m != 0:
+            raise(AssertionError("expert_m must evenly divide emb_dim"))
+        self.top_k = top_k
+        self.router = NoisyTopKRouter(n_experts=n_experts, top_k=top_k, emb_dim=emb_dim)
+        self.n_experts = n_experts
+        self.shared_expert = Expert(emb_dim=emb_dim, dropout=dropout)
+        self.experts = nn.ModuleList([
+            Expert(emb_dim=emb_dim, hidden_dim=emb_dim//expert_m, dropout=dropout) for _ in range(n_experts)
+        ])
+
+    def forward(self, x: torch.Tensor): # x: [B, S, D]
+        B, S, D = x.shape
+        # gating_output: [B, top_k] (float)
+        # indices: [B, top_k] (int)
+        gating_output, indices = self.router(x)
+        # final_output: [B, S, D]
+        final_output = torch.zeros_like(x)
+
+        # Reshape inputs for batch processing
+        x_flat = x.view(-1, D) # [B*S, D]
+        indices_flat = indices.view(-1, self.top_k) # [B*S, top_k]
+        gating_flat = gating_output.view(-1, self.n_experts) # [B*S, n_experts]
+        final_output_flat = final_output.view(-1, D) # [B*S, D]
+
+        # Get the shared expert output and add it to the result
+        shared_expert_output = self.shared_expert(x_flat)
+        final_output_flat += shared_expert_output
+
+        for i, expert in enumerate(self.experts):
+            # Find tokens routed to expert i
+            expert_mask = (indices_flat == i)
+            token_idx, expert_pos = torch.where(expert_mask)
+            if token_idx.numel() == 0:
+                continue
+
+            expert_input = x_flat[token_idx]
+            expert_output = expert(expert_input)
+
+            gating_scores = gating_flat[token_idx, i]
+            weighted_output = expert_output * gating_scores.unsqueeze(-1)
+
+            final_output_flat[token_idx] += weighted_output
+
+        return final_output_flat.view(B, S, D)
+
+
+# In[48]:
 
 
 class DeepSeekConfigDict(gpt.GPTConfigDict):
@@ -404,7 +508,7 @@ DeepSeekSmall: DeepSeekConfigDict = {
 }
 
 
-# In[138]:
+# In[ ]:
 
 
 class DeepSeekTransformerBlock(nn.Module):
@@ -426,8 +530,9 @@ class DeepSeekTransformerBlock(nn.Module):
         )
         self.drop_rate = cfg["drop_rate"]
         self.layer_norm_2 = gpt.LayerNorm(cfg["emb_dim"])
-        num_experts = max(4, cfg["emb_dim"] // 256)
-        self.feedforward = SparseMoEV2(emb_dim=cfg["emb_dim"], n_experts=num_experts, shared_experts=1, top_k=2)
+        expert_m = 4 # arbitrarily chosen
+        num_experts = max(4, cfg["emb_dim"] // 256) * expert_m
+        self.feedforward = FineGrainedMoE(emb_dim=cfg["emb_dim"], n_experts=num_experts, expert_m=expert_m, top_k=2*expert_m)
         self.dropout = nn.Dropout(self.drop_rate)
 
     def clear(self):
@@ -458,7 +563,7 @@ class DeepSeekTransformerBlock(nn.Module):
         return x
 
 
-# In[139]:
+# In[50]:
 
 
 class ClearableSequential(nn.Sequential):
@@ -510,7 +615,7 @@ class DeepSeekModel(nn.Module):
         return next(self.parameters()).device
 
 
-# In[140]:
+# In[46]:
 
 
 import tiktoken
@@ -555,7 +660,7 @@ if __name__ == "__main__":
     )  # should output "Hello, I am Featureiman Byeswickattribute argue"
 
 
-# In[141]:
+# In[ ]:
 
 
 import urllib.request
@@ -700,16 +805,19 @@ def train_verdict(model: DeepSeekModel, epochs: int = 10) -> float:
     return train_simple_text(model=model, text=text, cfg=verdict_training_config)
 
 
-# In[142]:
+# In[ ]:
 
 
 model = DeepSeekModel(cfg=DeepSeekSmall)
 model.to(gpt.get_device())
 
-train_verdict(model, epochs=10)
+# v3: 2m2.5s
+# v4: crash
+# fine: 
+train_verdict(model, epochs=5)
 
 
-# In[151]:
+# In[ ]:
 
 
 def text_to_token_ids(
