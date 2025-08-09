@@ -62,7 +62,7 @@
 # a naive KV caching strategy is great for smaller models, but it doesn't scale well to larger sizes. For
 # that, we'll need to get much more clever about it.
 
-# In[34]:
+# In[16]:
 
 
 import torch
@@ -88,7 +88,7 @@ import gpt
 # 
 #   - where $\theta_i$ is a frequency-based position angle.
 
-# In[35]:
+# In[17]:
 
 
 class RoPE(nn.Module):
@@ -131,7 +131,7 @@ class RoPE(nn.Module):
 
 # 
 
-# In[36]:
+# In[18]:
 
 
 class MultiHeadLatentAttentionWithRoPE(nn.Module):
@@ -254,7 +254,7 @@ class MultiHeadLatentAttentionWithRoPE(nn.Module):
         return logits, c_kv, k_r
 
 
-# In[37]:
+# In[19]:
 
 
 class Expert(nn.Module):
@@ -273,32 +273,58 @@ class Expert(nn.Module):
         return self.layer(x)
 
 
-# In[38]:
+# In[20]:
 
 
 class NoisyTopKRouter(nn.Module):
-    def __init__(self, n_experts: int, top_k: int, emb_dim: int):
+    def __init__(self, n_experts: int, top_k: int, emb_dim: int, u: float = 0.001):
+        """
+        n_experts: the total number of experts to route between
+        top_k: the number of experts to select for any given token
+        emb_dim: the token embedding dimension to use for routing
+        u: the load balancing correction coefficient
+        """
         super().__init__()
         self.n_experts = n_experts
         self.top_k = top_k
         self.routing = nn.Linear(emb_dim, n_experts, bias=False)
         self.noise_linear = nn.Linear(emb_dim, n_experts, bias=False)
+        self.register_buffer("bias", torch.zeros(n_experts, requires_grad=False))
+        self.u = u
+
+    def update_bias(self, expert_counts: torch.Tensor, total_tokens: int):
+        expected = total_tokens / self.n_experts
+        load = expert_counts.float()
+        bias_update = self.u * (expected - load)
+        self.bias += bias_update
 
     def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         logits = self.routing(x)
         if self.training:
             noise_logits = self.noise_linear(x)
             noise = torch.randn_like(logits)*F.softplus(noise_logits)
-            noisy_logits = logits + noise
+            logits = logits + noise
         else:
-            noisy_logits = logits
-        top_k_experts, top_k_indices = noisy_logits.topk(self.top_k, dim=-1)
-        routing = torch.full_like(noisy_logits, float('-inf')).scatter_(-1, top_k_indices, top_k_experts)
+            logits = logits
+
+        logits = logits + self.bias
+
+        top_k_experts, top_k_indices = logits.topk(self.top_k, dim=-1)
+
+        if self.training:
+            with torch.no_grad():
+                mask = torch.zeros_like(logits)
+                mask.scatter_(-1, top_k_indices, 1)
+                expert_counts = mask.sum(dim=(0, 1))
+                total_tokens = x.size(0) * x.size(1)
+                self.update_bias(expert_counts, total_tokens)
+
+        routing = torch.full_like(logits, float('-inf')).scatter_(-1, top_k_indices, top_k_experts)
         expert_selector_weight_matrix = F.softmax(routing, dim=-1)
         return (expert_selector_weight_matrix, top_k_indices)
 
 
-# In[39]:
+# In[21]:
 
 
 class SparseMoE(nn.Module):
@@ -336,7 +362,7 @@ class SparseMoE(nn.Module):
         return final_output
 
 
-# In[40]:
+# In[22]:
 
 
 class SparseMoEV2(nn.Module):
@@ -388,7 +414,7 @@ class SparseMoEV2(nn.Module):
         return final_output_flat.view(B, S, D)
 
 
-# In[41]:
+# In[23]:
 
 
 class SparseMoEV3(nn.Module):
@@ -438,7 +464,7 @@ class SparseMoEV3(nn.Module):
         return final_output_flat.view(B, S, D)
 
 
-# In[47]:
+# In[24]:
 
 
 class FineGrainedMoE(nn.Module):
@@ -490,7 +516,7 @@ class FineGrainedMoE(nn.Module):
         return final_output_flat.view(B, S, D)
 
 
-# In[48]:
+# In[25]:
 
 
 class DeepSeekConfigDict(gpt.GPTConfigDict):
@@ -508,7 +534,7 @@ DeepSeekSmall: DeepSeekConfigDict = {
 }
 
 
-# In[ ]:
+# In[26]:
 
 
 class DeepSeekTransformerBlock(nn.Module):
@@ -563,7 +589,7 @@ class DeepSeekTransformerBlock(nn.Module):
         return x
 
 
-# In[50]:
+# In[27]:
 
 
 class ClearableSequential(nn.Sequential):
@@ -615,7 +641,7 @@ class DeepSeekModel(nn.Module):
         return next(self.parameters()).device
 
 
-# In[46]:
+# In[28]:
 
 
 import tiktoken
@@ -660,7 +686,7 @@ if __name__ == "__main__":
     )  # should output "Hello, I am Featureiman Byeswickattribute argue"
 
 
-# In[ ]:
+# In[29]:
 
 
 import urllib.request
@@ -805,7 +831,7 @@ def train_verdict(model: DeepSeekModel, epochs: int = 10) -> float:
     return train_simple_text(model=model, text=text, cfg=verdict_training_config)
 
 
-# In[ ]:
+# In[30]:
 
 
 model = DeepSeekModel(cfg=DeepSeekSmall)
@@ -817,7 +843,7 @@ model.to(gpt.get_device())
 train_verdict(model, epochs=5)
 
 
-# In[ ]:
+# In[31]:
 
 
 def text_to_token_ids(
@@ -848,7 +874,7 @@ def trained_example(model: DeepSeekModel, start_context, new_tokens = 10):
 
     print("Output text (trained):\n", token_ids_to_text(token_ids, tokenizer))
 
-trained_example(model, "He said,", new_tokens=26)
+trained_example(model, "He never,", new_tokens=26)
 
 
 # In[ ]:
