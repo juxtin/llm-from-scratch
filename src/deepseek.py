@@ -62,7 +62,7 @@
 # a naive KV caching strategy is great for smaller models, but it doesn't scale well to larger sizes. For
 # that, we'll need to get much more clever about it.
 
-# In[16]:
+# In[1]:
 
 
 import torch
@@ -88,7 +88,7 @@ import gpt
 # 
 #   - where $\theta_i$ is a frequency-based position angle.
 
-# In[17]:
+# In[2]:
 
 
 class RoPE(nn.Module):
@@ -131,7 +131,7 @@ class RoPE(nn.Module):
 
 # 
 
-# In[18]:
+# In[3]:
 
 
 class MultiHeadLatentAttentionWithRoPE(nn.Module):
@@ -254,7 +254,7 @@ class MultiHeadLatentAttentionWithRoPE(nn.Module):
         return logits, c_kv, k_r
 
 
-# In[19]:
+# In[4]:
 
 
 class Expert(nn.Module):
@@ -273,7 +273,7 @@ class Expert(nn.Module):
         return self.layer(x)
 
 
-# In[20]:
+# In[5]:
 
 
 class NoisyTopKRouter(nn.Module):
@@ -324,147 +324,7 @@ class NoisyTopKRouter(nn.Module):
         return (expert_selector_weight_matrix, top_k_indices)
 
 
-# In[21]:
-
-
-class SparseMoE(nn.Module):
-    def __init__(self, emb_dim: int, n_experts: int, top_k: int, dropout: float = 0.1):
-        super().__init__()
-        self.top_k = top_k
-        self.router = NoisyTopKRouter(n_experts=n_experts, top_k=top_k, emb_dim=emb_dim)
-        self.experts = nn.ModuleList([
-            Expert(emb_dim=emb_dim, dropout=dropout) for _ in range(n_experts)
-        ])
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        gating_output, indices = self.router(x)
-        final_output = torch.zeros_like(x)
-
-        # Reshape inputs for batch processing
-        flat_x = x.view(-1, x.size(-1))
-        flat_gating_output = gating_output.view(-1, gating_output.size(-1))
-
-        for i, expert in enumerate(self.experts):
-            expert_mask = (indices == i).any(dim=-1)
-            flat_mask = expert_mask.view(-1)
-
-            if flat_mask.any():
-                expert_input = flat_x[flat_mask]
-                expert_output = expert(expert_input)
-
-                # extract and apply gating scores
-                gating_scores = flat_gating_output[flat_mask, i].unsqueeze(1)
-                weighted_output = expert_output * gating_scores
-
-                # update the final output matrix
-                final_output[expert_mask] += weighted_output.squeeze(1)
-
-        return final_output
-
-
-# In[22]:
-
-
-class SparseMoEV2(nn.Module):
-    def __init__(self, emb_dim: int, n_experts: int, shared_experts: int, top_k: int, dropout: float = 0.1):
-        super().__init__()
-        self.top_k = top_k
-        self.router = NoisyTopKRouter(n_experts=n_experts, top_k=top_k, emb_dim=emb_dim)
-        self.n_experts = n_experts
-        self.shared_experts = nn.ModuleList([
-            Expert(emb_dim=emb_dim, dropout=dropout) for _ in range(shared_experts)
-        ])
-        self.experts = nn.ModuleList([
-            Expert(emb_dim=emb_dim, dropout=dropout) for _ in range(n_experts)
-        ])
-
-    def forward(self, x: torch.Tensor): # x: [B, S, D]
-        B, S, D = x.shape
-        # gating_output: [B, top_k] (float)
-        # indices: [B, top_k] (int)
-        gating_output, indices = self.router(x)
-        # final_output: [B, S, D]
-        final_output = torch.zeros_like(x)
-
-        # Reshape inputs for batch processing
-        x_flat = x.view(-1, D) # [B*S, D]
-        indices_flat = indices.view(-1, self.top_k) # [B*S, top_k]
-        gating_flat = gating_output.view(-1, self.n_experts) # [B*S, n_experts]
-        final_output_flat = final_output.view(-1, D) # [B*S, D]
-
-        for i, expert in enumerate(self.shared_experts):
-            expert_output = expert(x_flat)
-            final_output_flat += expert_output
-
-        for i, expert in enumerate(self.experts):
-            # Find tokens routed to expert i
-            expert_mask = (indices_flat == i)
-            token_idx, expert_pos = torch.where(expert_mask)
-            if token_idx.numel() == 0:
-                continue
-
-            expert_input = x_flat[token_idx]
-            expert_output = expert(expert_input)
-
-            gating_scores = gating_flat[token_idx, i]
-            weighted_output = expert_output * gating_scores.unsqueeze(-1)
-
-            final_output_flat[token_idx] += weighted_output
-
-        return final_output_flat.view(B, S, D)
-
-
-# In[23]:
-
-
-class SparseMoEV3(nn.Module):
-    def __init__(self, emb_dim: int, n_experts: int, top_k: int, dropout: float = 0.1):
-        super().__init__()
-        self.top_k = top_k
-        self.router = NoisyTopKRouter(n_experts=n_experts, top_k=top_k, emb_dim=emb_dim)
-        self.n_experts = n_experts
-        self.shared_expert = Expert(emb_dim=emb_dim, dropout=dropout)
-        self.experts = nn.ModuleList([
-            Expert(emb_dim=emb_dim, dropout=dropout) for _ in range(n_experts)
-        ])
-
-    def forward(self, x: torch.Tensor): # x: [B, S, D]
-        B, S, D = x.shape
-        # gating_output: [B, top_k] (float)
-        # indices: [B, top_k] (int)
-        gating_output, indices = self.router(x)
-        # final_output: [B, S, D]
-        final_output = torch.zeros_like(x)
-
-        # Reshape inputs for batch processing
-        x_flat = x.view(-1, D) # [B*S, D]
-        indices_flat = indices.view(-1, self.top_k) # [B*S, top_k]
-        gating_flat = gating_output.view(-1, self.n_experts) # [B*S, n_experts]
-        final_output_flat = final_output.view(-1, D) # [B*S, D]
-
-        # Get the shared expert output and add it to the result
-        shared_expert_output = self.shared_expert(x_flat)
-        final_output_flat += shared_expert_output
-
-        for i, expert in enumerate(self.experts):
-            # Find tokens routed to expert i
-            expert_mask = (indices_flat == i)
-            token_idx, expert_pos = torch.where(expert_mask)
-            if token_idx.numel() == 0:
-                continue
-
-            expert_input = x_flat[token_idx]
-            expert_output = expert(expert_input)
-
-            gating_scores = gating_flat[token_idx, i]
-            weighted_output = expert_output * gating_scores.unsqueeze(-1)
-
-            final_output_flat[token_idx] += weighted_output
-
-        return final_output_flat.view(B, S, D)
-
-
-# In[24]:
+# In[6]:
 
 
 class FineGrainedMoE(nn.Module):
@@ -516,7 +376,7 @@ class FineGrainedMoE(nn.Module):
         return final_output_flat.view(B, S, D)
 
 
-# In[25]:
+# In[7]:
 
 
 class DeepSeekConfigDict(gpt.GPTConfigDict):
@@ -534,7 +394,7 @@ DeepSeekSmall: DeepSeekConfigDict = {
 }
 
 
-# In[26]:
+# In[8]:
 
 
 class DeepSeekTransformerBlock(nn.Module):
@@ -565,19 +425,11 @@ class DeepSeekTransformerBlock(nn.Module):
         self.c_kv = None
         self.k_r = None
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward_prefill(self, x: torch.Tensor) -> torch.Tensor:
         shortcut = x
-        x = self.layer_norm_1(x)
-        if self.training:
-            x, _, _ = self.attention(x, c_kv=None, k_r=None)
-            self.c_kv = None
-            self.k_r = None
-        else:
-            x, c_kv, k_r = self.attention(x, c_kv=self.c_kv, k_r=self.k_r)
-            c_kv = c_kv.detach()
-            self.c_kv = c_kv
-            k_r = k_r.detach()
-            self.k_r = k_r
+        x = self.layer_norm_1(x)        
+        x, _, _ = self.attention(x, c_kv=None, k_r=None)
+
         x = self.dropout(x)
         x = x + shortcut
 
@@ -588,8 +440,34 @@ class DeepSeekTransformerBlock(nn.Module):
         x = x + shortcut
         return x
 
+    def forward_cache(self, x: torch.Tensor) -> torch.Tensor:
+        start_idx = 0 if self.c_kv is None else -1
+        x_in = x[:, start_idx:, :]
+        shortcut = x[:, start_idx:, :]
 
-# In[27]:
+        x = self.layer_norm_1(x_in)
+        x, c_kv, k_r = self.attention(x, c_kv=self.c_kv, k_r=self.k_r)
+        self.c_kv = c_kv.detach()
+        self.k_r = k_r.detach()
+
+        x = self.dropout(x)
+        x = x + shortcut
+
+        shortcut = x
+        x = self.layer_norm_2(x)
+        x = self.feedforward(x)
+        x = self.dropout(x)
+        x = x + shortcut
+        return x
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if self.training:
+            return self.forward_prefill(x)
+        else:
+            return self.forward_cache(x)
+
+
+# In[9]:
 
 
 class ClearableSequential(nn.Sequential):
@@ -641,26 +519,35 @@ class DeepSeekModel(nn.Module):
         return next(self.parameters()).device
 
 
-# In[28]:
+# In[16]:
 
 
 import tiktoken
 
-def generate_text_simple(model: DeepSeekModel, idx, max_new_tokens, context_size, device=gpt.get_device()):
+def generate_text_simple(model: DeepSeekModel, encoded_input, max_new_tokens, context_size, device=gpt.get_device()):
     """
     A helper function used by smoke_test. It's easier to pass the prompt to smoke_test, rather than call this directly.
     """
-    idx.to(device)
+    model.eval()
+    model.clear()
+    encoded_input.to(device)
+
+    initial_input = encoded_input[:, -context_size:]
+    with torch.no_grad():
+        _ = model(initial_input)
+
+    current_ids = initial_input
     for _ in range(max_new_tokens):
-        idx_cond = idx[:, -context_size:]
+        last_token = current_ids[:, -1:]
         with torch.no_grad():
-            logits = model(idx_cond)
+            logits = model(last_token)
         logits = logits[:, -1, :]
         probabilities = torch.softmax(logits, dim=-1)
         idx_next = torch.argmax(probabilities, dim=-1, keepdim=True)
-        idx = torch.cat((idx, idx_next), dim=1)
+        current_ids = torch.cat((current_ids, idx_next), dim=1)
+
     model.clear()
-    return idx
+    return current_ids
 
 
 def smoke_test(prompt):
@@ -686,7 +573,7 @@ if __name__ == "__main__":
     )  # should output "Hello, I am Featureiman Byeswickattribute argue"
 
 
-# In[29]:
+# In[11]:
 
 
 import urllib.request
@@ -831,7 +718,7 @@ def train_verdict(model: DeepSeekModel, epochs: int = 10) -> float:
     return train_simple_text(model=model, text=text, cfg=verdict_training_config)
 
 
-# In[30]:
+# In[12]:
 
 
 model = DeepSeekModel(cfg=DeepSeekSmall)
@@ -840,10 +727,10 @@ model.to(gpt.get_device())
 # v3: 2m2.5s
 # v4: crash
 # fine: 
-train_verdict(model, epochs=5)
+train_verdict(model, epochs=4)
 
 
-# In[31]:
+# In[13]:
 
 
 def text_to_token_ids(
@@ -874,7 +761,7 @@ def trained_example(model: DeepSeekModel, start_context, new_tokens = 10):
 
     print("Output text (trained):\n", token_ids_to_text(token_ids, tokenizer))
 
-trained_example(model, "He never,", new_tokens=26)
+trained_example(model, "He never ", new_tokens=43)
 
 
 # In[ ]:
