@@ -809,7 +809,7 @@ pg.train_pg19(
 training.save(model, optimizer, "ds_pg19_472", base_path="../")
 
 
-# In[ ]:
+# In[32]:
 
 
 END_OF_TEXT = 50256
@@ -882,14 +882,14 @@ def text_completion_topk(
     return decoded_text
 
 
-# In[31]:
+# In[36]:
 
 
-text_completion_topk(
+print(text_completion_topk(
     model,
-    initial_context="Elephants do not",
+    initial_context="The sky is",
     max_new_tokens=128,
-)
+))
 
 
 # In[ ]:
