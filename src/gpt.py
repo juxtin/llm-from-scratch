@@ -386,7 +386,7 @@ class TransformerBlock(nn.Module):
 # 
 # Other than the smoke test below, this file is now complete. Next up is [training](./training.ipynb)!
 
-# In[49]:
+# In[ ]:
 
 
 class GPTModel(nn.Module):
@@ -424,6 +424,10 @@ class GPTModel(nn.Module):
         x = self.layer_norm(x)
         logits = self.output(x)
         return logits
+
+    def clear(self):
+        """This method is included for parity with DeepSeek, but it does nothing in this case."""
+        pass
 
     def device(self) -> torch.device:
         return next(self.parameters()).device

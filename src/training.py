@@ -263,7 +263,7 @@ def new_training_config(
 # 7. finally, `optimizer.step()` updates the optimizer's parameters for one step.
 # 
 
-# In[6]:
+# In[ ]:
 
 
 # Download the text if it's not yet available, then return it as a string
@@ -350,6 +350,7 @@ def calc_loss_loader(
 
     for i, (input_batch, target_batch) in enumerate(data_loader):
         if i < num_batches:
+            model.clear()
             loss = cross_entropy_loss_for_batch(
                 model, input_batch, target_batch, classification=classification
             )
@@ -369,6 +370,7 @@ def train_simple_text(model: gpt.GPTModel, text: str, cfg: TrainingConfig) -> fl
     for epoch in range(cfg["epochs"]):
         model.train()
         for input_batch, target_batch in training_loader:
+            model.clear()
             optimizer.zero_grad()
             loss = cross_entropy_loss_for_batch(
                 model, input_batch=input_batch, target_batch=target_batch
@@ -814,7 +816,7 @@ class SimpleCompletion(ExampleGenerator):
 # no option yet to do something like generating and logging an example completion,
 # although I'll probably add that soon.
 
-# In[15]:
+# In[ ]:
 
 
 def train(
@@ -853,6 +855,7 @@ def train(
                 for input_batch, target_batch in training_loader:
                     model.train()
                     optimizer.zero_grad()
+                    model.clear()
 
                     # Actual training
                     loss = cross_entropy_loss_for_batch(
@@ -895,10 +898,12 @@ def train(
                     ):  # validation_loader not required
                         clear_cache()
                         model.eval()
+                        model.clear()
                         with torch.inference_mode():
                             example = example_generator.generate(model)
                             metrics.log_example("example", example, step=global_step)
                             if validation_loader is not None:
+                                model.clear()
                                 validation_loss = calc_loss_loader(
                                     model,
                                     validation_loader,

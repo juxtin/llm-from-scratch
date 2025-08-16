@@ -37,7 +37,7 @@ import tiktoken
 import openai
 
 
-# In[2]:
+# In[ ]:
 
 
 class LazyTokenDatasetPG19(Dataset):
@@ -56,7 +56,7 @@ class LazyTokenDatasetPG19(Dataset):
         super().__init__()
         self.context_len = context_len
         self.preprocess()
-        self.file_paths = glob.glob("tokens/*.pt")
+        self.file_paths = glob.glob("../tokens/*.pt")
         self.samples: list[tuple[int, int]] = []
         print("Loading data from tokens directory")
         for i, path in enumerate(self.file_paths):
@@ -79,7 +79,7 @@ class LazyTokenDatasetPG19(Dataset):
 
     def preprocess(self):
         os.makedirs("tokens", exist_ok=True)
-        existing_filepaths = glob.glob("tokens/book_*.pt")
+        existing_filepaths = glob.glob("../tokens/book_*.pt")
         if (
             len(existing_filepaths) >= 28_000
         ):  # the approx size of the expanded tokens dir
@@ -89,7 +89,7 @@ class LazyTokenDatasetPG19(Dataset):
         print("Preprocessing data to tokens directory.")
         tokenizer = tiktoken.get_encoding("gpt2")
         for i, book in enumerate(ds):
-            path = Path(f"tokens/book_{i}.pt")
+            path = Path(f"../tokens/book_{i}.pt")
             if path.exists():
                 continue
             text = self.clean_text(book["text"])
@@ -138,33 +138,33 @@ def sample_loader(dataloader, n):
 # sample_loader(DataLoader(ltds, shuffle=True)
 
 
-# In[4]:
+# In[ ]:
 
 
-GPT_CONFIG_MEDIUM: gpt.GPTConfigDict = {
-    **gpt.GPT_CONFIG_124M,
-    "context_length": 512,
-}  # 1024 is just too big to train locally
-GPT_CONFIG_LARGE: gpt.GPTConfigDict = {**openai.GPT_CONFIG_774M, "context_length": 512}
-ltds = LazyTokenDatasetPG19(context_len=512)
-training_cfg: TrainingConfig = new_training_config(
-    epochs=1,
-    eval_freq=500,
-    peak_lr=1.5e-3,  # 1.5e-3 for 774M, 1e-3 for 355M
-    max_length=512,
-    # max_validation_batches=4,
-)
-# model = GPTModel(GPT_CONFIG_MEDIUM)
-model = GPTModel(GPT_CONFIG_LARGE)
-model.to(gpt.get_device())
-optimizer = training.default_optimizer(model, training_cfg)
+# GPT_CONFIG_MEDIUM: gpt.GPTConfigDict = {
+#     **gpt.GPT_CONFIG_124M,
+#     "context_length": 512,
+# }  # 1024 is just too big to train locally
+# GPT_CONFIG_LARGE: gpt.GPTConfigDict = {**openai.GPT_CONFIG_774M, "context_length": 512}
+# ltds = LazyTokenDatasetPG19(context_len=512)
+# training_cfg: TrainingConfig = new_training_config(
+#     epochs=1,
+#     eval_freq=500,
+#     peak_lr=1.5e-3,  # 1.5e-3 for 774M, 1e-3 for 355M
+#     max_length=512,
+#     # max_validation_batches=4,
+# )
+# # model = GPTModel(GPT_CONFIG_MEDIUM)
+# model = GPTModel(GPT_CONFIG_LARGE)
+# model.to(gpt.get_device())
+# optimizer = training.default_optimizer(model, training_cfg)
 
 
 # In[ ]:
 
 
-def train_pg19(name: str, dataset: Dataset = ltds, force_refresh: bool = False):
-    with open("walden.txt") as f:
+def train_pg19(name: str, model, optimizer, training_cfg, dataset: Dataset, force_refresh: bool = False):
+    with open("../the-verdict.txt") as f:
         walden_txt = f.read()
     walden_ds = training.GPTDatasetV1(
         walden_txt, tokenizer=tiktoken.get_encoding("gpt2"), max_length=512, stride=256
@@ -172,7 +172,7 @@ def train_pg19(name: str, dataset: Dataset = ltds, force_refresh: bool = False):
     if force_refresh:
         training.load(model, optimizer, name)
 
-    batch_size = 12
+    batch_size = 4
     training_loader = DataLoader(
         dataset,
         shuffle=True,
@@ -182,7 +182,7 @@ def train_pg19(name: str, dataset: Dataset = ltds, force_refresh: bool = False):
     validation_loader = DataLoader(
         walden_ds,  # type: ignore
         shuffle=True,
-        batch_size=4,
+        batch_size=batch_size,
         drop_last=True,
     )
 
@@ -201,9 +201,9 @@ def train_pg19(name: str, dataset: Dataset = ltds, force_refresh: bool = False):
 
 # Uncomment below to actually train the model. You won't get good results until you do.
 # training.load(model, optimizer, "pg19_medium")
-training.load(model, optimizer, name="pg19_755M_partial", base_path="/workspace")
-training_cfg["gradient_clipping"] = True
-train_pg19("new_training_run")
+# training.load(model, optimizer, name="pg19_755M_partial", base_path="/workspace")
+# training_cfg["gradient_clipping"] = True
+# train_pg19("new_training_run")
 
 
 # In[ ]:
@@ -225,7 +225,7 @@ def prompt(model: GPTModel, txt: str, max_tokens=128, temperature=0.8):
 # In[ ]:
 
 
-training.save(model, optimizer, name="pg19_755M_partial", base_path="/workspace")
+# training.save(model, optimizer, name="pg19_755M_partial", base_path="/workspace")
 
 
 # In[ ]:
