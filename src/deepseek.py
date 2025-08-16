@@ -770,7 +770,7 @@ def trained_example(model: DeepSeekModel, start_context, new_tokens = 10):
 # trained_example(model, "Jack thought", new_tokens=43)
 
 
-# In[ ]:
+# In[14]:
 
 
 import project_gutenberg as pg
@@ -789,6 +789,107 @@ model = DeepSeekModel(cfg=DeepSeekSmall)
 model.to(gpt.get_device())
 
 optimizer = training.default_optimizer(model, training_cfg)
+
+
+# In[15]:
+
+
+pg.train_pg19(
+    name="deepseek_test_1",
+    model=model,
+    optimizer=optimizer, 
+    training_cfg=training_cfg,
+    dataset=ldts,
+)
+
+
+# In[16]:
+
+
+training.save(model, optimizer, "ds_pg19_472", base_path="../")
+
+
+# In[ ]:
+
+
+END_OF_TEXT = 50256
+
+def choose_from_topk(
+    logits: torch.Tensor, topk: int, temperature: float
+) -> torch.Tensor:
+    top_logits, top_pos = torch.topk(logits, topk)
+    filtered = torch.full_like(logits, -torch.inf)
+    filtered.scatter_(dim=1, index=top_pos, src=top_logits)  # huh?
+    scaled = filtered / temperature
+    probabilities = torch.softmax(
+        scaled, dim=-1
+    )  # note: might have trouble with device
+    if torch.any(torch.isnan(probabilities)) or torch.any(probabilities < 0):
+        print("Bad probabilities:", probabilities)
+        print("Logits:", logits)
+        raise ValueError("NaNs or invalid values in probabilities")
+    return torch.multinomial(probabilities, num_samples=1)
+
+
+def generate_text_topk(
+    model: DeepSeekModel,
+    token_ids: torch.Tensor,
+    max_new_tokens: int,
+    context_size: int,
+    topk: int,
+    temperature: float,
+):
+    initial_input = token_ids[:, -context_size:]
+
+    with torch.no_grad():
+        _ = model(initial_input)
+
+    current_ids = initial_input
+    for _ in range(max_new_tokens):
+        last_token = current_ids[:, -1:]
+        with torch.no_grad():
+            logits = model(last_token)
+        logits = logits[:, -1, :]
+        idx_next = choose_from_topk(logits, topk, temperature)
+        if idx_next.item() == END_OF_TEXT:
+            break
+        current_ids = torch.cat((current_ids, idx_next), dim=1)
+    return current_ids
+
+
+def text_completion_topk(
+    model,
+    initial_context: str,
+    max_new_tokens: int = 10,
+    context_size: int = 256,
+    topk: int = 50,
+    temperature: float = 1.5,
+):
+    device = model.device()
+    encoded = tokenizer.encode(initial_context)
+    encoded_tensor = torch.tensor(encoded).unsqueeze(0).to(device)
+    model.eval()
+    model.clear()
+    out = generate_text_topk(
+        model,
+        encoded_tensor,
+        context_size=context_size,
+        max_new_tokens=max_new_tokens,
+        topk=topk,
+        temperature=temperature,
+    )
+    decoded_text = tokenizer.decode(out.squeeze(0).tolist())
+    return decoded_text
+
+
+# In[31]:
+
+
+text_completion_topk(
+    model,
+    initial_context="Elephants do not",
+    max_new_tokens=128,
+)
 
 
 # In[ ]:
