@@ -62,7 +62,7 @@
 # a naive KV caching strategy is great for smaller models, but it doesn't scale well to larger sizes. For
 # that, we'll need to get much more clever about it.
 
-# In[1]:
+# In[17]:
 
 
 import torch
@@ -88,7 +88,7 @@ import gpt
 # 
 #   - where $\theta_i$ is a frequency-based position angle.
 
-# In[2]:
+# In[18]:
 
 
 class RoPE(nn.Module):
@@ -131,7 +131,7 @@ class RoPE(nn.Module):
 
 # 
 
-# In[3]:
+# In[19]:
 
 
 class MultiHeadLatentAttentionWithRoPE(nn.Module):
@@ -254,7 +254,7 @@ class MultiHeadLatentAttentionWithRoPE(nn.Module):
         return logits, c_kv, k_r
 
 
-# In[4]:
+# In[20]:
 
 
 class Expert(nn.Module):
@@ -273,7 +273,7 @@ class Expert(nn.Module):
         return self.layer(x)
 
 
-# In[5]:
+# In[ ]:
 
 
 class NoisyTopKRouter(nn.Module):
@@ -295,7 +295,7 @@ class NoisyTopKRouter(nn.Module):
     def update_bias(self, expert_counts: torch.Tensor, total_tokens: int):
         expected = total_tokens / self.n_experts
         load = expert_counts.float()
-        bias_update = self.u * (expected - load)
+        bias_update = self.u * (expected - load) # TODO: this is technically wrong. instead of (expected - load), we want either -1 or 1, depending on the sign of (expected - load).
         self.bias += bias_update
 
     def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
@@ -324,7 +324,7 @@ class NoisyTopKRouter(nn.Module):
         return (expert_selector_weight_matrix, top_k_indices)
 
 
-# In[6]:
+# In[22]:
 
 
 class FineGrainedMoE(nn.Module):
@@ -376,7 +376,7 @@ class FineGrainedMoE(nn.Module):
         return final_output_flat.view(B, S, D)
 
 
-# In[7]:
+# In[23]:
 
 
 class DeepSeekConfigDict(gpt.GPTConfigDict):
@@ -394,7 +394,7 @@ DeepSeekSmall: DeepSeekConfigDict = {
 }
 
 
-# In[8]:
+# In[24]:
 
 
 class DeepSeekTransformerBlock(nn.Module):
@@ -467,7 +467,25 @@ class DeepSeekTransformerBlock(nn.Module):
             return self.forward_cache(x)
 
 
-# In[9]:
+# In[ ]:
+
+
+class RMSNorm(nn.Module):
+    def __init__(self, d_model: int, epsilon: float = 1e-8):
+        super().__init__()
+        self.d_model = d_model
+        self.epsilon = epsilon
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        rms = torch.sqrt(x.pow(2).mean(dim=-1, keepdim=True) + self.epsilon)
+        return x / rms
+
+class SimpleMTP(nn.Module):
+    def __init__(self):
+        pass
+
+
+# In[25]:
 
 
 class ClearableSequential(nn.Sequential):
@@ -519,7 +537,7 @@ class DeepSeekModel(nn.Module):
         return next(self.parameters()).device
 
 
-# In[16]:
+# In[26]:
 
 
 import tiktoken
@@ -573,7 +591,7 @@ if __name__ == "__main__":
     )  # should output "Hello, I am Featureiman Byeswickattribute argue"
 
 
-# In[11]:
+# In[27]:
 
 
 import urllib.request
@@ -718,7 +736,7 @@ def train_verdict(model: DeepSeekModel, epochs: int = 10) -> float:
     return train_simple_text(model=model, text=text, cfg=verdict_training_config)
 
 
-# In[12]:
+# In[32]:
 
 
 model = DeepSeekModel(cfg=DeepSeekSmall)
@@ -727,10 +745,10 @@ model.to(gpt.get_device())
 # v3: 2m2.5s
 # v4: crash
 # fine: 
-train_verdict(model, epochs=4)
+train_verdict(model, epochs=20)
 
 
-# In[13]:
+# In[33]:
 
 
 def text_to_token_ids(
@@ -761,7 +779,7 @@ def trained_example(model: DeepSeekModel, start_context, new_tokens = 10):
 
     print("Output text (trained):\n", token_ids_to_text(token_ids, tokenizer))
 
-trained_example(model, "He never ", new_tokens=43)
+trained_example(model, "Jack thought", new_tokens=43)
 
 
 # In[ ]:
