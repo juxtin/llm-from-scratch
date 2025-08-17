@@ -62,7 +62,7 @@
 # a naive KV caching strategy is great for smaller models, but it doesn't scale well to larger sizes. For
 # that, we'll need to get much more clever about it.
 
-# In[1]:
+# In[19]:
 
 
 import torch
@@ -88,7 +88,7 @@ import gpt
 # 
 #   - where $\theta_i$ is a frequency-based position angle.
 
-# In[2]:
+# In[20]:
 
 
 class RoPE(nn.Module):
@@ -131,7 +131,7 @@ class RoPE(nn.Module):
 
 # 
 
-# In[3]:
+# In[21]:
 
 
 class MultiHeadLatentAttentionWithRoPE(nn.Module):
@@ -254,7 +254,7 @@ class MultiHeadLatentAttentionWithRoPE(nn.Module):
         return logits, c_kv, k_r
 
 
-# In[4]:
+# In[22]:
 
 
 class Expert(nn.Module):
@@ -273,7 +273,7 @@ class Expert(nn.Module):
         return self.layer(x)
 
 
-# In[5]:
+# In[23]:
 
 
 class NoisyTopKRouter(nn.Module):
@@ -294,8 +294,9 @@ class NoisyTopKRouter(nn.Module):
 
     def update_bias(self, expert_counts: torch.Tensor, total_tokens: int):
         expected = total_tokens / self.n_experts
-        load = expert_counts.float()
-        bias_update = self.u * (expected - load) # TODO: this is technically wrong. instead of (expected - load), we want either -1 or 1, depending on the sign of (expected - load).
+        diff = expected - expert_counts
+        sign = torch.sign(diff)
+        bias_update = self.u * sign
         self.bias += bias_update
 
     def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
@@ -304,8 +305,6 @@ class NoisyTopKRouter(nn.Module):
             noise_logits = self.noise_linear(x)
             noise = torch.randn_like(logits)*F.softplus(noise_logits)
             logits = logits + noise
-        else:
-            logits = logits
 
         logits = logits + self.bias
 
@@ -324,7 +323,7 @@ class NoisyTopKRouter(nn.Module):
         return (expert_selector_weight_matrix, top_k_indices)
 
 
-# In[6]:
+# In[24]:
 
 
 class FineGrainedMoE(nn.Module):
@@ -376,11 +375,12 @@ class FineGrainedMoE(nn.Module):
         return final_output_flat.view(B, S, D)
 
 
-# In[7]:
+# In[25]:
 
 
 class DeepSeekConfigDict(gpt.GPTConfigDict):
     latent_dim: int # the size of the latent cache in MLA
+    expert_m: int # the divisor that determines the hidden dimension for fine-grained experts. E.g., 4 -> means hidden dim is model_d/4.
 
 DeepSeekSmall: DeepSeekConfigDict = {
     "vocab_size": 50257,
@@ -391,10 +391,23 @@ DeepSeekSmall: DeepSeekConfigDict = {
     "n_layers": 12,
     "drop_rate": 0.1,
     "qkv_bias": False,
+    "expert_m": 4,
+}
+
+DeepSeekMedium: DeepSeekConfigDict = {
+    "vocab_size": 50257,
+    "context_length": 1024,
+    "emb_dim": 1536,
+    "latent_dim": 16,
+    "n_heads": 24,
+    "n_layers": 24,
+    "drop_rate": 0.1,
+    "qkv_bias": False,
+    "expert_m": 4,
 }
 
 
-# In[8]:
+# In[26]:
 
 
 class DeepSeekTransformerBlock(nn.Module):
@@ -416,7 +429,7 @@ class DeepSeekTransformerBlock(nn.Module):
         )
         self.drop_rate = cfg["drop_rate"]
         self.layer_norm_2 = gpt.LayerNorm(cfg["emb_dim"])
-        expert_m = 4 # arbitrarily chosen
+        expert_m = cfg["expert_m"]
         num_experts = max(4, cfg["emb_dim"] // 256) * expert_m
         self.feedforward = FineGrainedMoE(emb_dim=cfg["emb_dim"], n_experts=num_experts, expert_m=expert_m, top_k=2*expert_m)
         self.dropout = nn.Dropout(self.drop_rate)
@@ -467,7 +480,7 @@ class DeepSeekTransformerBlock(nn.Module):
             return self.forward_cache(x)
 
 
-# In[9]:
+# In[27]:
 
 
 class RMSNorm(nn.Module):
@@ -485,7 +498,7 @@ class SimpleMTP(nn.Module):
         pass
 
 
-# In[10]:
+# In[28]:
 
 
 class ClearableSequential(nn.Sequential):
@@ -537,7 +550,7 @@ class DeepSeekModel(nn.Module):
         return next(self.parameters()).device
 
 
-# In[11]:
+# In[29]:
 
 
 import tiktoken
@@ -591,7 +604,15 @@ if __name__ == "__main__":
     )  # should output "Hello, I am Featureiman Byeswickattribute argue"
 
 
-# In[12]:
+# In[30]:
+
+
+def count_parameters(model, trainable_only=True):
+    return sum(p.numel() for p in model.parameters()
+               if (p.requires_grad or not trainable_only))
+
+
+# In[31]:
 
 
 import urllib.request
@@ -736,7 +757,7 @@ def train_verdict(model: DeepSeekModel, epochs: int = 10) -> float:
     return train_simple_text(model=model, text=text, cfg=verdict_training_config)
 
 
-# In[13]:
+# In[32]:
 
 
 def text_to_token_ids(
@@ -770,7 +791,20 @@ def trained_example(model: DeepSeekModel, start_context, new_tokens = 10):
 # trained_example(model, "Jack thought", new_tokens=43)
 
 
-# In[14]:
+# In[33]:
+
+
+model = DeepSeekModel(cfg=DeepSeekMedium)
+count_parameters(model)
+
+
+# In[34]:
+
+
+raise StopHere
+
+
+# In[ ]:
 
 
 import project_gutenberg as pg
@@ -791,7 +825,7 @@ model.to(gpt.get_device())
 optimizer = training.default_optimizer(model, training_cfg)
 
 
-# In[15]:
+# In[ ]:
 
 
 pg.train_pg19(
@@ -803,13 +837,13 @@ pg.train_pg19(
 )
 
 
-# In[16]:
+# In[ ]:
 
 
 training.save(model, optimizer, "ds_pg19_472", base_path="../")
 
 
-# In[32]:
+# In[ ]:
 
 
 END_OF_TEXT = 50256
@@ -882,7 +916,7 @@ def text_completion_topk(
     return decoded_text
 
 
-# In[36]:
+# In[ ]:
 
 
 print(text_completion_topk(
