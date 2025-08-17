@@ -62,7 +62,7 @@
 # a naive KV caching strategy is great for smaller models, but it doesn't scale well to larger sizes. For
 # that, we'll need to get much more clever about it.
 
-# In[19]:
+# In[1]:
 
 
 import torch
@@ -88,7 +88,7 @@ import gpt
 # 
 #   - where $\theta_i$ is a frequency-based position angle.
 
-# In[20]:
+# In[2]:
 
 
 class RoPE(nn.Module):
@@ -131,7 +131,7 @@ class RoPE(nn.Module):
 
 # 
 
-# In[21]:
+# In[3]:
 
 
 class MultiHeadLatentAttentionWithRoPE(nn.Module):
@@ -254,7 +254,7 @@ class MultiHeadLatentAttentionWithRoPE(nn.Module):
         return logits, c_kv, k_r
 
 
-# In[22]:
+# In[4]:
 
 
 class Expert(nn.Module):
@@ -273,7 +273,7 @@ class Expert(nn.Module):
         return self.layer(x)
 
 
-# In[23]:
+# In[5]:
 
 
 class NoisyTopKRouter(nn.Module):
@@ -323,7 +323,7 @@ class NoisyTopKRouter(nn.Module):
         return (expert_selector_weight_matrix, top_k_indices)
 
 
-# In[24]:
+# In[6]:
 
 
 class FineGrainedMoE(nn.Module):
@@ -375,7 +375,7 @@ class FineGrainedMoE(nn.Module):
         return final_output_flat.view(B, S, D)
 
 
-# In[25]:
+# In[7]:
 
 
 class DeepSeekConfigDict(gpt.GPTConfigDict):
@@ -407,7 +407,7 @@ DeepSeekMedium: DeepSeekConfigDict = {
 }
 
 
-# In[26]:
+# In[8]:
 
 
 class DeepSeekTransformerBlock(nn.Module):
@@ -480,7 +480,7 @@ class DeepSeekTransformerBlock(nn.Module):
             return self.forward_cache(x)
 
 
-# In[27]:
+# In[9]:
 
 
 class RMSNorm(nn.Module):
@@ -498,7 +498,7 @@ class SimpleMTP(nn.Module):
         pass
 
 
-# In[28]:
+# In[10]:
 
 
 class ClearableSequential(nn.Sequential):
@@ -550,7 +550,7 @@ class DeepSeekModel(nn.Module):
         return next(self.parameters()).device
 
 
-# In[29]:
+# In[11]:
 
 
 import tiktoken
@@ -604,7 +604,7 @@ if __name__ == "__main__":
     )  # should output "Hello, I am Featureiman Byeswickattribute argue"
 
 
-# In[30]:
+# In[12]:
 
 
 def count_parameters(model, trainable_only=True):
@@ -612,7 +612,7 @@ def count_parameters(model, trainable_only=True):
                if (p.requires_grad or not trainable_only))
 
 
-# In[31]:
+# In[13]:
 
 
 import urllib.request
@@ -757,7 +757,7 @@ def train_verdict(model: DeepSeekModel, epochs: int = 10) -> float:
     return train_simple_text(model=model, text=text, cfg=verdict_training_config)
 
 
-# In[32]:
+# In[14]:
 
 
 def text_to_token_ids(
@@ -791,14 +791,14 @@ def trained_example(model: DeepSeekModel, start_context, new_tokens = 10):
 # trained_example(model, "Jack thought", new_tokens=43)
 
 
-# In[33]:
+# In[15]:
 
 
 model = DeepSeekModel(cfg=DeepSeekMedium)
 count_parameters(model)
 
 
-# In[34]:
+# In[ ]:
 
 
 raise StopHere
@@ -813,19 +813,19 @@ import training
 training_cfg: pg.TrainingConfig = pg.new_training_config(
     epochs=1,
     eval_freq=500,
-    peak_lr=1.5e-3,  # 1.5e-3 for 774M, 1e-3 for 355M
+    peak_lr=1e-3,  # 1.5e-3 for 774M, 1e-3 for 355M
     max_length=512,
     # max_validation_batches=4,
 )
 ldts = pg.LazyTokenDatasetPG19(context_len=512)
 
-model = DeepSeekModel(cfg=DeepSeekSmall)
+# model = DeepSeekModel(cfg=DeepSeekSmall)
 model.to(gpt.get_device())
 
 optimizer = training.default_optimizer(model, training_cfg)
 
 
-# In[ ]:
+# In[21]:
 
 
 pg.train_pg19(

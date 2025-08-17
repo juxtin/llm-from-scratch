@@ -172,7 +172,7 @@ def train_pg19(name: str, model, optimizer, training_cfg, dataset: Dataset, forc
     if force_refresh:
         training.load(model, optimizer, name)
 
-    batch_size = 4
+    batch_size = 1
     training_loader = DataLoader(
         dataset,
         shuffle=True,
