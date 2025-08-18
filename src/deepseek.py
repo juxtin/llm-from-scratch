@@ -62,7 +62,7 @@
 # a naive KV caching strategy is great for smaller models, but it doesn't scale well to larger sizes. For
 # that, we'll need to get much more clever about it.
 
-# In[1]:
+# In[3]:
 
 
 import torch
@@ -88,7 +88,7 @@ import gpt
 # 
 #   - where $\theta_i$ is a frequency-based position angle.
 
-# In[2]:
+# In[4]:
 
 
 class RoPE(nn.Module):
@@ -131,7 +131,7 @@ class RoPE(nn.Module):
 
 # 
 
-# In[3]:
+# In[5]:
 
 
 class MultiHeadLatentAttentionWithRoPE(nn.Module):
@@ -254,7 +254,7 @@ class MultiHeadLatentAttentionWithRoPE(nn.Module):
         return logits, c_kv, k_r
 
 
-# In[4]:
+# In[6]:
 
 
 class Expert(nn.Module):
@@ -273,7 +273,7 @@ class Expert(nn.Module):
         return self.layer(x)
 
 
-# In[5]:
+# In[7]:
 
 
 class NoisyTopKRouter(nn.Module):
@@ -323,7 +323,7 @@ class NoisyTopKRouter(nn.Module):
         return (expert_selector_weight_matrix, top_k_indices)
 
 
-# In[6]:
+# In[8]:
 
 
 class FineGrainedMoE(nn.Module):
@@ -375,7 +375,7 @@ class FineGrainedMoE(nn.Module):
         return final_output_flat.view(B, S, D)
 
 
-# In[7]:
+# In[9]:
 
 
 class DeepSeekConfigDict(gpt.GPTConfigDict):
@@ -396,10 +396,10 @@ DeepSeekSmall: DeepSeekConfigDict = {
 
 DeepSeekMedium: DeepSeekConfigDict = {
     "vocab_size": 50257,
-    "context_length": 1024,
-    "emb_dim": 1536,
-    "latent_dim": 16,
-    "n_heads": 24,
+    "context_length": 2048,
+    "emb_dim": 1024,
+    "latent_dim": 256,
+    "n_heads": 16,
     "n_layers": 24,
     "drop_rate": 0.1,
     "qkv_bias": False,
@@ -407,7 +407,7 @@ DeepSeekMedium: DeepSeekConfigDict = {
 }
 
 
-# In[8]:
+# In[10]:
 
 
 class DeepSeekTransformerBlock(nn.Module):
@@ -480,7 +480,7 @@ class DeepSeekTransformerBlock(nn.Module):
             return self.forward_cache(x)
 
 
-# In[9]:
+# In[11]:
 
 
 class RMSNorm(nn.Module):
@@ -498,7 +498,7 @@ class SimpleMTP(nn.Module):
         pass
 
 
-# In[10]:
+# In[12]:
 
 
 class ClearableSequential(nn.Sequential):
@@ -550,7 +550,7 @@ class DeepSeekModel(nn.Module):
         return next(self.parameters()).device
 
 
-# In[11]:
+# In[13]:
 
 
 import tiktoken
@@ -604,7 +604,7 @@ if __name__ == "__main__":
     )  # should output "Hello, I am Featureiman Byeswickattribute argue"
 
 
-# In[12]:
+# In[14]:
 
 
 def count_parameters(model, trainable_only=True):
@@ -612,7 +612,7 @@ def count_parameters(model, trainable_only=True):
                if (p.requires_grad or not trainable_only))
 
 
-# In[13]:
+# In[15]:
 
 
 import urllib.request
@@ -757,7 +757,7 @@ def train_verdict(model: DeepSeekModel, epochs: int = 10) -> float:
     return train_simple_text(model=model, text=text, cfg=verdict_training_config)
 
 
-# In[14]:
+# In[16]:
 
 
 def text_to_token_ids(
@@ -791,7 +791,7 @@ def trained_example(model: DeepSeekModel, start_context, new_tokens = 10):
 # trained_example(model, "Jack thought", new_tokens=43)
 
 
-# In[15]:
+# In[17]:
 
 
 model = DeepSeekModel(cfg=DeepSeekMedium)
@@ -801,40 +801,42 @@ count_parameters(model)
 # In[ ]:
 
 
-raise StopHere
-
-
-# In[ ]:
-
-
-import project_gutenberg as pg
-import training
-
-training_cfg: pg.TrainingConfig = pg.new_training_config(
-    epochs=1,
-    eval_freq=500,
-    peak_lr=1e-3,  # 1.5e-3 for 774M, 1e-3 for 355M
-    max_length=512,
-    # max_validation_batches=4,
-)
-ldts = pg.LazyTokenDatasetPG19(context_len=512)
-
-# model = DeepSeekModel(cfg=DeepSeekSmall)
 model.to(gpt.get_device())
 
-optimizer = training.default_optimizer(model, training_cfg)
-
-
-# In[21]:
-
-
-pg.train_pg19(
-    name="deepseek_test_1",
-    model=model,
-    optimizer=optimizer, 
-    training_cfg=training_cfg,
-    dataset=ldts,
+wikipedia_training_cfg = training.new_training_config(
+    train_percent=0.95,
+    initial_lr=0.0001,
+    peak_lr=0.001,
+    weight_decay=0.1,
+    max_length=4096,
+    epochs=1,
+    eval_freq=250,
 )
+
+optimizer = training.default_optimizer(
+    model,
+    wikipedia_training_cfg,
+)
+
+training.train(
+    model=model,
+    cfg=wikipedia_training_cfg,
+    optimizer=optimizer,
+    training_loader=None,
+    validation_loader=None,
+    metrics=training.MLflowMetrics(),
+    example_generator=training.SimpleCompletion(
+        prompt="America is",
+        max_new_tokens=24,
+        context_size=32,
+    )
+)
+
+
+# In[18]:
+
+
+raise StopHere
 
 
 # In[ ]:

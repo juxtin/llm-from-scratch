@@ -163,7 +163,7 @@ def sample_loader(dataloader, n):
 # In[ ]:
 
 
-def train_pg19(name: str, model, optimizer, training_cfg, dataset: Dataset, force_refresh: bool = False):
+def train_pg19(name: str, model, optimizer, training_cfg, dataset: Dataset, batch_size: int = 4, force_refresh: bool = False):
     with open("../the-verdict.txt") as f:
         walden_txt = f.read()
     walden_ds = training.GPTDatasetV1(
@@ -172,7 +172,6 @@ def train_pg19(name: str, model, optimizer, training_cfg, dataset: Dataset, forc
     if force_refresh:
         training.load(model, optimizer, name)
 
-    batch_size = 1
     training_loader = DataLoader(
         dataset,
         shuffle=True,
