@@ -7,7 +7,7 @@
 # 
 # This notebook provides helpers to train on English-language Wikipedia articles.
 
-# In[ ]:
+# In[1]:
 
 
 # Allow imports from ../src, which holds the de-notebookified code files
@@ -17,7 +17,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path().resolve().parent / "src"))
 
 
-# In[35]:
+# In[2]:
 
 
 from datasets import load_dataset
@@ -25,11 +25,11 @@ from datasets import load_dataset
 # Quick smoke test on 1%:
 # ds = load_dataset("google/wiki40b", "en", split="train[:1%]")
 # Full split:
-ds_train_raw = load_dataset("google/wiki40b", "en", split="train")
-ds_val_raw = load_dataset("google/wiki40b", "en", split="validation")
+ds_train_raw = load_dataset("google/wiki40b", "en", split="train[:1%]")
+ds_val_raw = load_dataset("google/wiki40b", "en", split="validation[:1%]")
 
 
-# In[36]:
+# In[3]:
 
 
 import re
@@ -49,7 +49,7 @@ ds_train = ds_train_raw.map(normalize, remove_columns=ds_train_raw.column_names,
 ds_val = ds_val_raw.map(normalize, remove_columns=ds_val_raw.column_names, num_proc=8)
 
 
-# In[30]:
+# In[4]:
 
 
 # pip install datasets tiktoken torch
@@ -116,7 +116,7 @@ def pack_docs(doc_chunks, ctx=CTX):
     return packs
 
 # ---- Build map-style datasets from an HF split with columns: title, text ----
-def build_map_style(hf_split, ctx=CTX, overlap=OVERLAP):
+def build_map_style(hf_split, ctx=CTX, overlap=OVERLAP, limit = -1):
     # 1) chunk each article
     ds_chunks = hf_split.map(
         lambda ex: {"chunks": chunk_article(ex["title"], ex["text"], ctx, overlap)},
@@ -127,6 +127,9 @@ def build_map_style(hf_split, ctx=CTX, overlap=OVERLAP):
     # 2) flatten chunks
     flat = []
     for chs in ds_chunks["chunks"]:
+        if limit == 0:
+            break
+        limit -= 1
         flat.extend(chs)
     # 3) greedy-pack to 4k sequences
     packs = pack_docs(flat, ctx=ctx)
@@ -174,19 +177,26 @@ def pad_collate(batch, pad_id=0, ignore_index=IGNORE_INDEX):
 #                           pin_memory=True, persistent_workers=True, collate_fn=pad_collate)
 
 
-# In[42]:
+# In[5]:
 
 
 from functools import partial
 
 
-train_ds = build_map_style(ds_train_raw)
-val_ds = build_map_style(ds_val)
+train_ds = build_map_style(ds_train, limit=1000)
+val_ds = build_map_style(ds_val, limit=100)
 
 def loaders(batch_size = 4):
-    custom_loader = functools.partial(
+    custom_loader = partial(
         DataLoader,
+        batch_size=batch_size,
+        shuffle=True,
+        num_workers=1,
+        pin_memory=True,
+        persistent_workers=True,
+        collate_fn=pad_collate
     )
+    return (custom_loader(train_ds), custom_loader(val_ds))
 
 
 # In[ ]:
