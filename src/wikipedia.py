@@ -140,6 +140,8 @@ def build_map_style(hf_split, ctx=CTX, overlap=OVERLAP, limit = -1):
             ids = np.array(self.packs[i], dtype=np.int32)
             # labels for next-token loss: ignore last position
             labels = ids.copy()
+            if labels.shape[0] > 1:
+                labels[:-1] = ids[1:]
             labels[-1] = self.ignore_index
             return {
                 "input_ids": torch.from_numpy(ids),
@@ -189,6 +191,7 @@ def loaders(batch_size = 4):
     train_ds = build_map_style(ds_train, limit=1000)
     val_ds = build_map_style(ds_val, limit=100)
 
+    collate = lambda batch: pad_collate(batch, pad_id=0, ignore_index=IGNORE_INDEX)
     custom_loader = partial(
         DataLoader,
         batch_size=batch_size,
@@ -196,7 +199,7 @@ def loaders(batch_size = 4):
         num_workers=1,
         pin_memory=True,
         persistent_workers=True,
-        collate_fn=pad_collate
+        collate_fn=collate
     )
     return (custom_loader(train_ds), custom_loader(val_ds))
 

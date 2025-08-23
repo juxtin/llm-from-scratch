@@ -50,7 +50,7 @@ def clear_cache():
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
 
-DEBUG=True
+DEBUG=False
 
 
 # ## The mini config

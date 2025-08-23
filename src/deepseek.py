@@ -815,7 +815,7 @@ wikipedia_training_cfg = training.new_training_config(
     weight_decay=0.1,
     max_length=2048,
     epochs=1,
-    eval_freq=20,
+    eval_freq=200,
 )
 
 optimizer = training.default_optimizer(
