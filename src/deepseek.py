@@ -815,7 +815,7 @@ wikipedia_training_cfg = training.new_training_config(
     weight_decay=0.1,
     max_length=2048,
     epochs=1,
-    eval_freq=200,
+    eval_freq=500,
 )
 
 optimizer = training.default_optimizer(
@@ -825,6 +825,7 @@ optimizer = training.default_optimizer(
 
 wp_train, wp_val = wp.loaders(1)
 
+print("Loaders loaded. Beginning training...")
 training.train(
     model=model,
     cfg=wikipedia_training_cfg,
@@ -840,22 +841,10 @@ training.train(
 )
 
 
-# In[34]:
-
-
-i = 10
-for input, target in wp_train:
-    if i == 0:
-        break
-    i -= 1
-    print(f"Input: {input}")
-    print(f"Target: {target}")
-
-
 # In[ ]:
 
 
-training.save(model, optimizer, "ds_wp_trial", base_path="../")
+training.save(model, optimizer, "ds_wp_trial", base_path="../", overwrite=True)
 
 
 # In[ ]:

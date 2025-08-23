@@ -15,7 +15,8 @@ import gpt  # type: ignore
 from torch.utils.data import Dataset, DataLoader
 import math
 import mlflow
-import os
+import os, subprocess
+import psutil
 import urllib.request
 import tiktoken
 import torch
@@ -51,6 +52,8 @@ def clear_cache():
         torch.cuda.empty_cache()
 
 DEBUG=False
+
+os.environ["MLFLOW_ENABLE_SYSTEM_METRICS_LOGGING"] = "true"
 
 
 # ## The mini config
@@ -724,7 +727,7 @@ def cosine_decay_lr(
 # 
 # The class below is modeled after the MLflow methods that I used before.
 
-# In[13]:
+# In[ ]:
 
 
 class Metrics(ABC):
@@ -812,7 +815,7 @@ class MLflowMetrics(Metrics):
 
     def log_example(self, name: str, contents: str, step: int):
         mlflow.log_text(
-            contents, artifact_file=f"{self.artifact_dir}/{name}_{step}.txt"
+            contents, artifact_file=f"{self.artifact_dir}/{name}_{step:012d}.txt"
         )
 
 
