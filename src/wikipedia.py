@@ -17,7 +17,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path().resolve().parent / "src"))
 
 
-# In[2]:
+# In[ ]:
 
 
 from datasets import load_dataset
@@ -25,11 +25,11 @@ from datasets import load_dataset
 # Quick smoke test on 1%:
 # ds = load_dataset("google/wiki40b", "en", split="train[:1%]")
 # Full split:
-ds_train_raw = load_dataset("google/wiki40b", "en", split="train[:1%]")
-ds_val_raw = load_dataset("google/wiki40b", "en", split="validation[:1%]")
+# ds_train_raw = load_dataset("google/wiki40b", "en", split="train")
+# ds_val_raw = load_dataset("google/wiki40b", "en", split="validation")
 
 
-# In[3]:
+# In[ ]:
 
 
 import re
@@ -45,11 +45,8 @@ def normalize(example):
     plain = re.sub("_NEWLINE_", "\n\n", plain)
     return {"title": title, "text": plain}
 
-ds_train = ds_train_raw.map(normalize, remove_columns=ds_train_raw.column_names, num_proc=8)
-ds_val = ds_val_raw.map(normalize, remove_columns=ds_val_raw.column_names, num_proc=8)
 
-
-# In[4]:
+# In[ ]:
 
 
 # pip install datasets tiktoken torch
@@ -61,9 +58,9 @@ import tiktoken
 from datasets import load_dataset, Dataset as HFDataset, concatenate_datasets
 
 # ---- Config ----
-CTX = 4096
+CTX = 1024
 OVERLAP = 96
-IGNORE_INDEX = -100
+IGNORE_INDEX = 50256
 DOC_TOK   = "<doc>"
 TITLE_TOK = "<title>"
 SEC_TOK   = "<sec>"
@@ -162,7 +159,7 @@ def pad_collate(batch, pad_id=0, ignore_index=IGNORE_INDEX):
         L = ex["input_ids"].shape[0]
         input_ids[i, :L] = ex["input_ids"]
         labels[i, :L]    = ex["labels"]
-    return {"input_ids": input_ids, "labels": labels}
+    return (input_ids, labels)
 
 # ---- Example usage (Wiki40B) ----
 # ds_train_raw = load_dataset("google/wiki40b","en", split="train")
@@ -177,16 +174,21 @@ def pad_collate(batch, pad_id=0, ignore_index=IGNORE_INDEX):
 #                           pin_memory=True, persistent_workers=True, collate_fn=pad_collate)
 
 
-# In[5]:
+# In[ ]:
 
 
 from functools import partial
 
-
-train_ds = build_map_style(ds_train, limit=1000)
-val_ds = build_map_style(ds_val, limit=100)
-
 def loaders(batch_size = 4):
+    ds_train_raw = load_dataset("google/wiki40b", "en", split="train[:1%]")
+    ds_val_raw = load_dataset("google/wiki40b", "en", split="validation[:1%]")
+
+    ds_train = ds_train_raw.map(normalize, remove_columns=ds_train_raw.column_names, num_proc=8)
+    ds_val = ds_val_raw.map(normalize, remove_columns=ds_val_raw.column_names, num_proc=8)
+
+    train_ds = build_map_style(ds_train, limit=1000)
+    val_ds = build_map_style(ds_val, limit=100)
+
     custom_loader = partial(
         DataLoader,
         batch_size=batch_size,
@@ -203,4 +205,33 @@ def loaders(batch_size = 4):
 
 
 
+
+
+# In[ ]:
+
+
+# Update: Ensure labels are next-token targets by shifting left in PackedTokens
+from datasets import load_dataset, Dataset as HFDataset
+import numpy as np
+import torch
+from torch.utils.data import Dataset
+import tiktoken
+enc = tiktoken.get_encoding("gpt2")
+IGNORE_INDEX = -100
+class PackedTokens(Dataset):
+    def __init__(self, packs, ignore_index=IGNORE_INDEX):
+        self.packs = packs
+        self.ignore_index = ignore_index
+    def __len__(self): return len(self.packs)
+    def __getitem__(self, i):
+        ids = np.array(self.packs[i], dtype=np.int64)
+        labels = ids.copy()
+        if labels.shape[0] > 1:
+            labels[:-1] = ids[1:]
+        labels[-1] = self.ignore_index
+        return {
+            "input_ids": torch.from_numpy(ids),
+            "labels": torch.from_numpy(labels),
+            "length": torch.tensor(len(ids), dtype=torch.int32),
+        }
 

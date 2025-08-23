@@ -7,7 +7,7 @@
 # 
 # Having created the GPT model in [gpt.ipynb](./gpt.ipynb), it's time to try training it.
 
-# In[1]:
+# In[ ]:
 
 
 import import_ipynb
@@ -49,6 +49,8 @@ os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 def clear_cache():
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
+
+DEBUG=True
 
 
 # ## The mini config
@@ -311,6 +313,64 @@ def text_training_loaders(
     validation_loader = custom_dataloader(validation_dataset)
     return (train_loader, validation_loader)
 
+def debug_batch(input_batch, target_batch, max_rows: int = 3, max_tokens: int = 120, ignore_index: int = -100, pad_id: int | None = 0) -> None:
+    """
+    Decode and print a few samples from a batch for inspection.
+    - Accepts either tensors or dicts with keys 'input_ids' / 'labels'.
+    - Assumes GPT-2 tokenizer.
+    - Filters out padding and ignore_index from targets before decoding.
+    """
+    enc = tiktoken.get_encoding("gpt2")
+
+    # Support HF-style dict batches or plain tensors
+    if isinstance(input_batch, dict):
+        input_ids = input_batch.get("input_ids", input_batch)
+    else:
+        input_ids = input_batch
+    if isinstance(target_batch, dict):
+        labels = target_batch.get("labels", target_batch)
+    else:
+        labels = target_batch
+
+    # Ensure tensors on CPU
+    if isinstance(input_ids, torch.Tensor):
+        input_ids = input_ids.detach().cpu()
+    if isinstance(labels, torch.Tensor):
+        labels = labels.detach().cpu()
+
+    B = input_ids.shape[0]
+    show = min(B, max_rows)
+
+    for i in range(show):
+        inp_row = input_ids[i].tolist()
+        tgt_row = labels[i].tolist()
+
+        # Filter padding from inputs if a pad_id is known
+        if pad_id is not None:
+            inp_tokens = [t for t in inp_row if t != pad_id]
+        else:
+            inp_tokens = inp_row
+
+        # Filter ignore_index and padding from targets
+        if pad_id is not None:
+            tgt_tokens = [t for t in tgt_row if t != ignore_index and t != pad_id]
+        else:
+            tgt_tokens = [t for t in tgt_row if t != ignore_index]
+
+        # Decode (truncate for readability)
+        inp_text = enc.decode(inp_tokens[:max_tokens])
+        tgt_text = enc.decode(tgt_tokens[:max_tokens])
+        print(f"Input: {inp_text}")
+        print(f"Target: {tgt_text}")
+
+        # Quick alignment check (optional)
+        align_ok = False
+        if len(inp_tokens) >= 2 and len(tgt_tokens) >= 1:
+            m = min(len(inp_tokens) - 1, len(tgt_tokens), 32)  # check first 32 positions
+            align_ok = inp_tokens[1:1 + m] == tgt_tokens[:m]
+
+        print(f"\n--- Sample {i} ---")
+        print(f"input len={len(inp_tokens)} target len={len(tgt_tokens)} shift_ok={align_ok}")
 
 def cross_entropy_loss_for_batch(
     model: gpt.GPTModel,
@@ -321,6 +381,8 @@ def cross_entropy_loss_for_batch(
     """Returns the model's loss for the given batch. The loss can be used to train the model.
     Supports classification and completion modes. Usually, you want completion (classification=False)."""
     device = model.device()
+    if DEBUG:
+        debug_batch(input_batch=input_batch, target_batch=target_batch)
     input_batch, target_batch = input_batch.to(device), target_batch.to(device)
     logits = model(input_batch)
     if classification:
