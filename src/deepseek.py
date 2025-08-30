@@ -550,7 +550,7 @@ class DeepSeekModel(nn.Module):
         return next(self.parameters()).device
 
 
-# In[28]:
+# In[ ]:
 
 
 import tiktoken
@@ -587,7 +587,7 @@ def smoke_test(prompt):
     """
     torch.manual_seed(123)
     tokenizer = tiktoken.get_encoding("gpt2")
-    model = DeepSeekModel(DeepSeekSmall)
+    model = DeepSeekModel(DeepSeekSmall).to("cpu")
     encoded = tokenizer.encode(prompt)
     encoded_tensor = torch.tensor(encoded).unsqueeze(0)
     model.eval()
@@ -794,62 +794,6 @@ def trained_example(model: DeepSeekModel, start_context, new_tokens = 10):
 # In[ ]:
 
 
-# model = DeepSeekModel(cfg=DeepSeekMedium)
-wp_small = DeepSeekSmall.copy()
-wp_small['context_length'] = 1024
-model = DeepSeekModel(cfg=DeepSeekSmall)
-count_parameters(model)
-
-
-# In[ ]:
-
-
-import wikipedia as wp
-
-model.to(gpt.get_device())
-
-wikipedia_training_cfg = training.new_training_config(
-    train_percent=0.95,
-    initial_lr=0.0001,
-    peak_lr=0.001,
-    weight_decay=0.1,
-    max_length=2048,
-    epochs=1,
-    eval_freq=500,
-)
-
-optimizer = training.default_optimizer(
-    model,
-    wikipedia_training_cfg,
-)
-
-wp_train, wp_val = wp.loaders(1)
-
-print("Loaders loaded. Beginning training...")
-training.train(
-    model=model,
-    cfg=wikipedia_training_cfg,
-    optimizer=optimizer,
-    training_loader=wp_train,
-    validation_loader=wp_val,
-    metrics=training.MLflowMetrics(),
-    example_generator=training.SimpleCompletion(
-        prompt="America is",
-        max_new_tokens=24,
-        context_size=32,
-    )
-)
-
-
-# In[ ]:
-
-
-training.save(model, optimizer, "ds_wp_trial", base_path="../", overwrite=True)
-
-
-# In[ ]:
-
-
 END_OF_TEXT = 50256
 
 def choose_from_topk(
@@ -918,6 +862,84 @@ def text_completion_topk(
     )
     decoded_text = tokenizer.decode(out.squeeze(0).tolist())
     return decoded_text
+
+class DeepSeekCompletion(training.ExampleGenerator):
+    def __init__(
+        self,
+        prompt: str = "It is good",
+        tokenizer: tiktoken.Encoding = tiktoken.get_encoding("gpt2"),
+        max_new_tokens: int = 10,
+        context_size: int = 128,
+        topk: int = 50,
+        temperature: float = 0.8,
+    ):
+        self.prompt = prompt
+        self.tokenizer = tokenizer
+        self.max_new_tokens = max_new_tokens
+        self.context_size = context_size
+        self.topk = topk
+        self.temperature = temperature
+
+    def generate(self, model: gpt.GPTModel) -> str:
+        return text_completion_topk(
+            model,
+            self.prompt,
+            max_new_tokens=self.max_new_tokens,
+            context_size=self.context_size,
+            topk=self.topk,
+            temperature=self.temperature,
+        )
+
+
+# In[ ]:
+
+
+# model = DeepSeekModel(cfg=DeepSeekMedium)
+wp_small = DeepSeekSmall.copy()
+wp_small['context_length'] = 1024
+model = DeepSeekModel(cfg=DeepSeekSmall)
+count_parameters(model)
+
+
+# In[ ]:
+
+
+import wikipedia as wp
+
+model.to(gpt.get_device())
+
+wikipedia_training_cfg = training.new_training_config(
+    train_percent=0.95,
+    initial_lr=0.000003, # experimenting with 1/10 original learning rate, then 1/3 of that
+    peak_lr=0.00003, # same for peak lr
+    weight_decay=0.1,
+    max_length=2048,
+    epochs=1,
+    eval_freq=500,
+)
+
+optimizer = training.default_optimizer(
+    model,
+    wikipedia_training_cfg,
+)
+
+wp_train, wp_val = wp.loaders(1)
+
+print("Loaders loaded. Beginning training...")
+training.train(
+    model=model,
+    cfg=wikipedia_training_cfg,
+    optimizer=optimizer,
+    training_loader=wp_train,
+    validation_loader=wp_val,
+    metrics=training.MLflowMetrics(),
+    example_generator=DeepSeekCompletion(
+        prompt="America is",
+        max_new_tokens=32,
+        context_size=32,
+    ),
+    save_name="wp_small_trial",
+)
 
 
 # In[ ]:

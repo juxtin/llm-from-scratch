@@ -184,7 +184,7 @@ from functools import partial
 def loaders(batch_size = 4):
     print("Loading datasets...")
     ds_train_raw = load_dataset("google/wiki40b", "en", split="train[:20%]")
-    ds_val_raw = load_dataset("google/wiki40b", "en", split="validation[:10%]")
+    ds_val_raw = load_dataset("google/wiki40b", "en", split="validation[:1%]")
     print("Datasets loaded")
 
     print("Normalizing training data...")

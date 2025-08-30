@@ -182,7 +182,7 @@ class GPTDatasetV1(Dataset):
 # Rather than adding the parameters one by one to every function that might need them,
 # I'm going to create a dataclass that we can pass around.
 
-# In[5]:
+# In[ ]:
 
 
 class TrainingConfig(TypedDict):
@@ -590,7 +590,7 @@ if __name__ == "__main__":
 # 
 # 
 
-# In[10]:
+# In[ ]:
 
 
 def save(
@@ -598,7 +598,7 @@ def save(
     optimizer: Optional[optim.Optimizer],
     name: str,
     overwrite: bool = False,
-    base_path: str = ".",
+    base_path: str = "..",
 ):
     if len(name) == 0:
         raise ValueError("name can't be empty")
@@ -893,6 +893,7 @@ def train(
     lr_schedule_fn: Optional[LearningRateFunction] = None,
     metrics: Metrics = StdoutMetrics(print_interval=20),
     example_generator: ExampleGenerator = SimpleCompletion(),
+    save_name: Optional[str] = None,
 ):
     warmup_steps = 1
     if lr_schedule_fn is None:
@@ -903,6 +904,13 @@ def train(
     global_step = 0
     total_steps = cfg["epochs"] * len(training_loader)
     loss_val = 0.0
+
+    if save_name is not None:
+        try:
+            load(model, optimizer, save_name, ".", model.device())
+            print(f"Loaded {save_name}")
+        except FileNotFoundError:
+            print(f"No previous save available for {save_name}, starting a new one")
 
     try:
         with metrics.start_run():
@@ -964,6 +972,8 @@ def train(
                         clear_cache()
                         model.eval()
                         model.clear()
+                        if save_name is not None:
+                            save(model, optimizer, save_name, base_path=".", overwrite=True)
                         with torch.inference_mode():
                             example = example_generator.generate(model)
                             metrics.log_example("example", example, step=global_step)
