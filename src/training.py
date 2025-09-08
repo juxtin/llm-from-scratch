@@ -931,13 +931,24 @@ def train(
                     model.clear()
 
                     # Actual training
-                    loss = cross_entropy_loss_for_batch(
-                        model,
-                        input_batch=input_batch,
-                        target_batch=target_batch,
-                        classification=cfg["classification"],
-                    )
-                    loss_val = loss.item()
+                    if cfg.get("mtp", 0) > 0:
+                        logits = model.mtp(
+                            input_tokens=input_batch,
+                            init_hidden=None, # gonna need to refactor this
+                        )
+                        loss = model.mtp.loss(
+                            input_tokens=input_batch, # wrong!
+                            targets=target_batch,     # wrong!
+                            mtp_logits=logits
+                        )
+                    else:
+                        loss = cross_entropy_loss_for_batch(
+                            model,
+                            input_batch=input_batch,
+                            target_batch=target_batch,
+                            classification=cfg["classification"],
+                        )
+                        loss_val = loss.item()
                     loss.backward()
                     tokens_seen += input_batch.numel()
                     global_step += 1

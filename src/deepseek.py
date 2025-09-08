@@ -62,7 +62,7 @@
 # a naive KV caching strategy is great for smaller models, but it doesn't scale well to larger sizes. For
 # that, we'll need to get much more clever about it.
 
-# In[18]:
+# In[1]:
 
 
 import torch
@@ -88,7 +88,7 @@ import gpt
 # 
 #   - where $\theta_i$ is a frequency-based position angle.
 
-# In[19]:
+# In[2]:
 
 
 class RoPE(nn.Module):
@@ -131,7 +131,7 @@ class RoPE(nn.Module):
 
 # 
 
-# In[20]:
+# In[3]:
 
 
 class MultiHeadLatentAttentionWithRoPE(nn.Module):
@@ -254,7 +254,7 @@ class MultiHeadLatentAttentionWithRoPE(nn.Module):
         return logits, c_kv, k_r
 
 
-# In[21]:
+# In[4]:
 
 
 class Expert(nn.Module):
@@ -273,7 +273,7 @@ class Expert(nn.Module):
         return self.layer(x)
 
 
-# In[22]:
+# In[5]:
 
 
 class NoisyTopKRouter(nn.Module):
@@ -323,7 +323,7 @@ class NoisyTopKRouter(nn.Module):
         return (expert_selector_weight_matrix, top_k_indices)
 
 
-# In[23]:
+# In[6]:
 
 
 class FineGrainedMoE(nn.Module):
@@ -381,6 +381,7 @@ class FineGrainedMoE(nn.Module):
 class DeepSeekConfigDict(gpt.GPTConfigDict):
     latent_dim: int # the size of the latent cache in MLA
     expert_m: int # the divisor that determines the hidden dimension for fine-grained experts. E.g., 4 -> means hidden dim is model_d/4.
+    mtp: int # the number of extra tokens to predict for Multi-Token Prediction. 0 disables (default)
 
 DeepSeekSmall: DeepSeekConfigDict = {
     "vocab_size": 50257,
@@ -392,6 +393,7 @@ DeepSeekSmall: DeepSeekConfigDict = {
     "drop_rate": 0.1,
     "qkv_bias": False,
     "expert_m": 4,
+    "mtp": 0,
 }
 
 DeepSeekMedium: DeepSeekConfigDict = {
@@ -404,10 +406,11 @@ DeepSeekMedium: DeepSeekConfigDict = {
     "drop_rate": 0.1,
     "qkv_bias": False,
     "expert_m": 4,
+    "mtp": 0,
 }
 
 
-# In[25]:
+# In[8]:
 
 
 class DeepSeekTransformerBlock(nn.Module):
@@ -480,7 +483,20 @@ class DeepSeekTransformerBlock(nn.Module):
             return self.forward_cache(x)
 
 
-# In[26]:
+# In[18]:
+
+
+class ClearableSequential(nn.Sequential):
+    def __init__(self, *args: nn.Module):
+        super().__init__(*args)
+        self.args = args
+
+    def clear(self):
+        for m in self.args:
+            m.clear()
+
+
+# In[ ]:
 
 
 class RMSNorm(nn.Module):
@@ -494,21 +510,112 @@ class RMSNorm(nn.Module):
         return x / rms
 
 class SimpleMTP(nn.Module):
-    def __init__(self):
-        pass
+    def __init__(self, cfg: DeepSeekConfigDict, emb_dim: int, vocab_size: int, prediction_length: int, n_heads: int):
+        super().__init__()
+        self.emb_dim = emb_dim
+        self.vocab_size = vocab_size
+        self.prediction_length = prediction_length
+        self.n_heads = n_heads
 
+        self.rmsnorm = RMSNorm(emb_dim)
+        self.token_embedding = nn.Embedding(vocab_size, emb_dim)
+        self.token_unembedding = nn.Linear(vocab_size, emb_dim, bias=False)
+        self.token_unembedding.weight = self.token_embedding.weight
 
-# In[27]:
-
-
-class ClearableSequential(nn.Sequential):
-    def __init__(self, *args: nn.Module):
-        super().__init__(*args)
-        self.args = args
+        self.projections = nn.ModuleList([
+            nn.Linear(2 * self.emb_dim, emb_dim) for _ in range(prediction_length)
+        ])
+        self.transformers = ClearableSequential(
+            *[DeepSeekTransformerBlock(cfg) for _ in range(prediction_length)]
+        )
 
     def clear(self):
-        for m in self.args:
-            m.clear()
+        self.transformers.clear()
+
+    def loss(self, input_tokens: torch.Tensor, targets: torch.Tensor, mtp_logits: torch.Tensor) -> torch.Tensor:
+        batch_size, seq_len = input_tokens.shape
+        B, L, D, V = mtp_logits.shape
+        _, T = targets.shape
+        assert L == T - D
+
+        # Double-loop loss:
+        loss = 0.0
+        for i in range(L):
+            for k in range(D):
+                logit_ik = mtp_logits[:, i, k, :]
+                target_ik = targets[:, i + (k + 1)]
+                loss += F.cross_entropy(logit_ik, target_ik)
+        loss = loss / (L * D)
+        return loss
+
+    def forward(self, input_tokens: torch.Tensor, init_hidden: Optional[torch.Tensor] = None) -> torch.Tensor:
+        """
+        input_tokens: (batch, seq_len) input tokens
+        init_hidden: (batch, seq_len, emb_dim) base hidden states. Uses token embeddings if None.
+
+        Returns:
+          Tensor of shape (batch, seq_len - prediction_length, emb_dim)
+        """
+        B, T = input_tokens.shape
+
+        # token embeddings: (B, T, emb_dim)
+        embeddings = self.token_embedding(input_tokens)
+
+        if init_hidden is None:
+            h0_seq = embeddings
+        else:
+            h0_seq = init_hidden
+
+        outputs = [] # will hold (B, D, vocab_size) for each i
+        max_i = T - self.prediction_length - 1
+        for i in range(0, max_i + 1): # why add one if we just subtracted 1? weird.
+            # the previous hidden state for depth 0 at pos i
+            h_prev = h0_seq[:, i, :]
+
+            logits_k = []
+            for k in range(self.prediction_length):
+                # future token embedding at pos i + (k + 1)
+                future_pos = i + (k + 1)
+                token_embedding = embeddings[:, future_pos, :] # (B, emb_dim)
+
+                # 1) RMS-normalize
+                h_norm = self.rmsnorm(h_prev) # (B, d_model)
+                e_norm = self.rmsnorm(token_embedding) # (B, d_model)
+
+                # 2) concatenate -> (B, 2*emb_dim)
+                merged = torch.cat([h_norm, e_norm], dim=-1)
+
+                # 3) project back to emb_dim
+                proj = self.projections[k](merged)
+
+                # 4) Transformer block (expects shape (S, B, emb_dim))
+                x = proj.unsqueeze(0)           # (1, B, emb_dim)
+                x = self.transformers[k](x)     # (1, B, emb_dim)
+                h_curr = x.squeeze(0)           # (B, d_model)
+
+                # 5) unembed -> logits
+                logits = self.token_unembedding(h_curr)
+                logits_k.append(logits)
+
+                # 6) chain hidden for next depth
+                h_prev = h_curr
+
+            # stack along depth axis -> (B, D, vocab_size)
+            logits_k = torch.stack(logits_k, dim=1)
+            outputs.append(logits_k)
+
+        # stack along sequence axis -> (T-D, B, D, V) then permute -> (B, T-D, D, V)
+        out = torch.stack(outputs, dim=0)
+        out = out.permute(1, 0, 2, 3).contiguous()
+        return out
+
+
+
+
+
+
+# In[ ]:
+
 
 class DeepSeekModel(nn.Module):
     """
@@ -550,7 +657,7 @@ class DeepSeekModel(nn.Module):
         return next(self.parameters()).device
 
 
-# In[ ]:
+# In[11]:
 
 
 import tiktoken
@@ -604,7 +711,7 @@ if __name__ == "__main__":
     )  # should output "Hello, I am Featureiman Byeswickattribute argue"
 
 
-# In[29]:
+# In[12]:
 
 
 def count_parameters(model, trainable_only=True):
@@ -612,7 +719,7 @@ def count_parameters(model, trainable_only=True):
                if (p.requires_grad or not trainable_only))
 
 
-# In[30]:
+# In[13]:
 
 
 import urllib.request
@@ -757,7 +864,7 @@ def train_verdict(model: DeepSeekModel, epochs: int = 10) -> float:
     return train_simple_text(model=model, text=text, cfg=verdict_training_config)
 
 
-# In[31]:
+# In[14]:
 
 
 def text_to_token_ids(
@@ -791,7 +898,7 @@ def trained_example(model: DeepSeekModel, start_context, new_tokens = 10):
 # trained_example(model, "Jack thought", new_tokens=43)
 
 
-# In[ ]:
+# In[15]:
 
 
 END_OF_TEXT = 50256
@@ -891,7 +998,7 @@ class DeepSeekCompletion(training.ExampleGenerator):
         )
 
 
-# In[ ]:
+# In[16]:
 
 
 # model = DeepSeekModel(cfg=DeepSeekMedium)
@@ -901,7 +1008,7 @@ model = DeepSeekModel(cfg=DeepSeekSmall)
 count_parameters(model)
 
 
-# In[ ]:
+# In[17]:
 
 
 import wikipedia as wp
