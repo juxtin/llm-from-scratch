@@ -416,9 +416,11 @@ def calc_loss_loader(
     for i, (input_batch, target_batch) in enumerate(data_loader):
         if i < num_batches:
             model.clear()
-            logits = model(input_batch.to(model.device()))
             loss = cross_entropy_loss_for_batch(
-                model, logits, target_batch, classification=classification
+                model,
+                input_batch=input_batch.to(model.device()),
+                target_batch=target_batch,
+                classification=classification
             )
             total_loss += loss.item()
         else:
@@ -438,9 +440,10 @@ def train_simple_text(model: gpt.GPTModel, text: str, cfg: TrainingConfig) -> fl
         for input_batch, target_batch in training_loader:
             model.clear()
             optimizer.zero_grad()
-            logits = model(input_batch.to(model.device()))
             loss = cross_entropy_loss_for_batch(
-                model, logits=logits, target_batch=target_batch
+                model,
+                input_batch=input_batch.to(model.device()),
+                target_batch=target_batch,
             )
             loss.backward()
             optimizer.step()
@@ -933,28 +936,30 @@ def train(
                     model.clear()
 
                     # Actual training
-                    logits = model(input_batch.to(model.device()))
-                    if cfg.get("mtp", 0) > 0:
+                    # logits = model(input_batch.to(model.device()))
+                    print(f"MTP: {model.cfg.get('mtp', 0)}")
+                    if model.cfg.get("mtp", 0) > 0:
                         # Experiment with this later:
                         # init_hidden = model.transformer_blocks[-1].feedforward.weights
                         init_hidden = None
+                        debug = cfg["eval_freq"] > 0 and global_step % cfg["eval_freq"] == 0
                         mtp_logits = model.mtp(
                             input_tokens=input_batch,
                             init_hidden=init_hidden,
+                            debug_print=debug,
                         )
                         loss = model.mtp.loss(
-                            input_tokens=input_batch,
                             targets=target_batch,
                             mtp_logits=mtp_logits
                         )
                     else:
                         loss = cross_entropy_loss_for_batch(
                             model,
-                            logits=logits,
+                            input_batch=input_batch,
                             target_batch=target_batch,
                             classification=cfg["classification"],
                         )
-                        loss_val = loss.item()
+                    loss_val = loss.item()
                     loss.backward()
                     tokens_seen += input_batch.numel()
                     global_step += 1

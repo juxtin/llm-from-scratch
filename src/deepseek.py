@@ -62,7 +62,7 @@
 # a naive KV caching strategy is great for smaller models, but it doesn't scale well to larger sizes. For
 # that, we'll need to get much more clever about it.
 
-# In[5]:
+# In[ ]:
 
 
 import torch
@@ -88,7 +88,7 @@ import gpt
 # 
 #   - where $\theta_i$ is a frequency-based position angle.
 
-# In[6]:
+# In[ ]:
 
 
 class RoPE(nn.Module):
@@ -131,7 +131,7 @@ class RoPE(nn.Module):
 
 # 
 
-# In[7]:
+# In[ ]:
 
 
 class MultiHeadLatentAttentionWithRoPE(nn.Module):
@@ -254,7 +254,7 @@ class MultiHeadLatentAttentionWithRoPE(nn.Module):
         return logits, c_kv, k_r
 
 
-# In[8]:
+# In[ ]:
 
 
 class Expert(nn.Module):
@@ -273,7 +273,7 @@ class Expert(nn.Module):
         return self.layer(x)
 
 
-# In[9]:
+# In[ ]:
 
 
 class NoisyTopKRouter(nn.Module):
@@ -323,7 +323,7 @@ class NoisyTopKRouter(nn.Module):
         return (expert_selector_weight_matrix, top_k_indices)
 
 
-# In[10]:
+# In[ ]:
 
 
 class FineGrainedMoE(nn.Module):
@@ -375,7 +375,7 @@ class FineGrainedMoE(nn.Module):
         return final_output_flat.view(B, S, D)
 
 
-# In[11]:
+# In[ ]:
 
 
 class DeepSeekConfigDict(gpt.GPTConfigDict):
@@ -410,7 +410,7 @@ DeepSeekMedium: DeepSeekConfigDict = {
 }
 
 
-# In[12]:
+# In[ ]:
 
 
 class DeepSeekTransformerBlock(nn.Module):
@@ -483,7 +483,7 @@ class DeepSeekTransformerBlock(nn.Module):
             return self.forward_cache(x)
 
 
-# In[13]:
+# In[ ]:
 
 
 class ClearableSequential(nn.Sequential):
@@ -496,8 +496,10 @@ class ClearableSequential(nn.Sequential):
             m.clear()
 
 
-# In[14]:
+# In[ ]:
 
+
+import tiktoken
 
 class RMSNorm(nn.Module):
     def __init__(self, d_model: int, epsilon: float = 1e-8):
@@ -508,6 +510,19 @@ class RMSNorm(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         rms = torch.sqrt(x.pow(2).mean(dim=-1, keepdim=True) + self.epsilon)
         return x / rms
+
+tokenizer = tiktoken.get_encoding("gpt2")
+
+def decode(logits: torch.Tensor) -> str:
+    # print(f"decode: logits shape {logits.shape}")
+    # [4, vocab_size]
+    probabilities = torch.softmax(logits, dim=-1)
+    idx = torch.argmax(probabilities, dim=-1, keepdim=True)
+    print(f"decode: idx shape {idx.shape}")
+    token_list = [xs[0] for xs in idx.tolist()]
+    print(f"decode: token_list {token_list}")
+    # return tokenizer.decode(idx.squeeze(0).tolist())
+    return tokenizer.decode(token_list)
 
 class SimpleMTP(nn.Module):
     def __init__(self, cfg: DeepSeekConfigDict, emb_dim: int, vocab_size: int, prediction_length: int, n_heads: int):
@@ -532,8 +547,7 @@ class SimpleMTP(nn.Module):
     def clear(self):
         self.transformers.clear()
 
-    def loss(self, input_tokens: torch.Tensor, targets: torch.Tensor, mtp_logits: torch.Tensor) -> torch.Tensor:
-        batch_size, seq_len = input_tokens.shape
+    def loss(self, targets: torch.Tensor, mtp_logits: torch.Tensor) -> torch.Tensor:
         B, L, D, V = mtp_logits.shape
         _, T = targets.shape
         assert L == T - D
@@ -548,7 +562,7 @@ class SimpleMTP(nn.Module):
         loss = loss / (L * D)
         return loss
 
-    def forward(self, input_tokens: torch.Tensor, init_hidden: Optional[torch.Tensor] = None) -> torch.Tensor:
+    def forward(self, input_tokens: torch.Tensor, init_hidden: Optional[torch.Tensor] = None, debug_print: bool = False) -> torch.Tensor:
         """
         input_tokens: (batch, seq_len) input tokens
         init_hidden: (batch, seq_len, emb_dim) base hidden states. Uses token embeddings if None.
@@ -595,6 +609,8 @@ class SimpleMTP(nn.Module):
 
                 # 5) unembed -> logits
                 logits = self.token_unembedding(h_curr)
+                if debug_print:
+                    print("Prediction:", decode(logits))
                 logits_k.append(logits)
 
                 # 6) chain hidden for next depth
@@ -610,11 +626,7 @@ class SimpleMTP(nn.Module):
         return out
 
 
-
-
-
-
-# In[15]:
+# In[ ]:
 
 
 class DeepSeekModel(nn.Module):
@@ -640,12 +652,14 @@ class DeepSeekModel(nn.Module):
         self.layer_norm = gpt.LayerNorm(cfg["emb_dim"])
         self.output = nn.Linear(cfg["emb_dim"], cfg["vocab_size"], bias=False)
 
+        self.mtp = SimpleMTP(cfg=cfg, emb_dim=cfg["emb_dim"], vocab_size=cfg['vocab_size'], prediction_length=cfg['mtp'], n_heads=0)
+
     def clear(self):
         self.transformer_blocks.clear()
 
     def forward(self, in_idx: torch.Tensor) -> torch.Tensor:
         """Forward pass: input indices to logits."""
-        batch_size, sequence_length = in_idx.shape
+        # batch_size, sequence_length = in_idx.shape
         x = self.token_embedding(in_idx)
         x = self.dropout(x)
         x = self.transformer_blocks(x)
@@ -657,7 +671,7 @@ class DeepSeekModel(nn.Module):
         return next(self.parameters()).device
 
 
-# In[16]:
+# In[ ]:
 
 
 import tiktoken
@@ -711,7 +725,7 @@ if __name__ == "__main__":
     )  # should output "Hello, I am Featureiman Byeswickattribute argue"
 
 
-# In[17]:
+# In[ ]:
 
 
 def count_parameters(model, trainable_only=True):
@@ -719,7 +733,7 @@ def count_parameters(model, trainable_only=True):
                if (p.requires_grad or not trainable_only))
 
 
-# In[18]:
+# In[ ]:
 
 
 import urllib.request
@@ -1011,9 +1025,51 @@ count_parameters(model)
 # In[ ]:
 
 
+def mtp_training_data(n: int):
+    segments = ["one two three" for _ in range(n)]
+    return " ".join(segments)
+
+
+# In[ ]:
+
+
 import training
 
-fuck
+smoke_training_cfg = training.new_training_config(
+    train_percent=0.95,
+    initial_lr=0.000003, # experimenting with 1/10 original learning rate, then 1/3 of that
+    peak_lr=0.00003, # same for peak lr
+    weight_decay=0.1,
+    max_length=128,
+    epochs=10,
+    eval_freq=100,
+)
+
+mtp_cfg = DeepSeekSmall.copy()
+mtp_cfg['mtp'] = 2
+model = DeepSeekModel(cfg=mtp_cfg)
+
+mtp_train, mtp_val = training.text_training_loaders(mtp_training_data(10_000), smoke_training_cfg)
+optimizer = training.default_optimizer(
+    model,
+    smoke_training_cfg
+)
+
+training.train(
+    model=model,
+    cfg=smoke_training_cfg,
+    optimizer=optimizer,
+    training_loader=mtp_train,
+    validation_loader=mtp_val,
+    metrics=training.StdoutMetrics(),
+    example_generator=DeepSeekCompletion(
+        prompt="one two three",
+        max_new_tokens=32,
+        context_size=32,
+    ),
+    # save_name="wp_small_trial",
+)
+syntax error to keep the rest of the notebook from being executed
 
 
 # In[ ]:
@@ -1065,6 +1121,13 @@ print(text_completion_topk(
     initial_context="The sky is",
     max_new_tokens=128,
 ))
+
+
+# In[ ]:
+
+
+list = [[29721], [33283], [11173], [33283]]
+[xs[0] for xs in list]
 
 
 # In[ ]:
