@@ -287,7 +287,7 @@ def the_verdict() -> str:
 
 
 def text_training_loaders(
-    text: str, cfg: TrainingConfig
+    text: str, cfg: TrainingConfig, batch_size=4
 ) -> tuple[DataLoader, DataLoader]:
     """Turn the given text into two Dataloaders: one for training and one for validation."""
     split_idx = int(len(text) * cfg["train_percent"])
@@ -300,7 +300,7 @@ def text_training_loaders(
         stride=cfg["stride"],
     )
     custom_dataloader = partial(
-        DataLoader, batch_size=4, shuffle=True, drop_last=True, num_workers=0
+        DataLoader, batch_size=batch_size, shuffle=True, drop_last=True, num_workers=0
     )
 
     # raw text portions
@@ -937,12 +937,14 @@ def train(
 
                     # Actual training
                     # logits = model(input_batch.to(model.device()))
-                    print(f"MTP: {model.cfg.get('mtp', 0)}")
                     if model.cfg.get("mtp", 0) > 0:
                         # Experiment with this later:
                         # init_hidden = model.transformer_blocks[-1].feedforward.weights
                         init_hidden = None
                         debug = cfg["eval_freq"] > 0 and global_step % cfg["eval_freq"] == 0
+                        if debug:
+                            input_tokens = tokenizer.decode(input_batch[0].tolist())
+                            print(f"input_batch: {input_tokens}")
                         mtp_logits = model.mtp(
                             input_tokens=input_batch,
                             init_hidden=init_hidden,

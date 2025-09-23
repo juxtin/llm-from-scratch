@@ -62,7 +62,7 @@
 # a naive KV caching strategy is great for smaller models, but it doesn't scale well to larger sizes. For
 # that, we'll need to get much more clever about it.
 
-# In[ ]:
+# In[1]:
 
 
 import torch
@@ -88,7 +88,7 @@ import gpt
 # 
 #   - where $\theta_i$ is a frequency-based position angle.
 
-# In[ ]:
+# In[2]:
 
 
 class RoPE(nn.Module):
@@ -131,7 +131,7 @@ class RoPE(nn.Module):
 
 # 
 
-# In[ ]:
+# In[3]:
 
 
 class MultiHeadLatentAttentionWithRoPE(nn.Module):
@@ -254,7 +254,7 @@ class MultiHeadLatentAttentionWithRoPE(nn.Module):
         return logits, c_kv, k_r
 
 
-# In[ ]:
+# In[4]:
 
 
 class Expert(nn.Module):
@@ -273,7 +273,7 @@ class Expert(nn.Module):
         return self.layer(x)
 
 
-# In[ ]:
+# In[5]:
 
 
 class NoisyTopKRouter(nn.Module):
@@ -323,7 +323,7 @@ class NoisyTopKRouter(nn.Module):
         return (expert_selector_weight_matrix, top_k_indices)
 
 
-# In[ ]:
+# In[6]:
 
 
 class FineGrainedMoE(nn.Module):
@@ -375,7 +375,7 @@ class FineGrainedMoE(nn.Module):
         return final_output_flat.view(B, S, D)
 
 
-# In[ ]:
+# In[7]:
 
 
 class DeepSeekConfigDict(gpt.GPTConfigDict):
@@ -410,7 +410,7 @@ DeepSeekMedium: DeepSeekConfigDict = {
 }
 
 
-# In[ ]:
+# In[8]:
 
 
 class DeepSeekTransformerBlock(nn.Module):
@@ -483,7 +483,7 @@ class DeepSeekTransformerBlock(nn.Module):
             return self.forward_cache(x)
 
 
-# In[ ]:
+# In[9]:
 
 
 class ClearableSequential(nn.Sequential):
@@ -514,14 +514,9 @@ class RMSNorm(nn.Module):
 tokenizer = tiktoken.get_encoding("gpt2")
 
 def decode(logits: torch.Tensor) -> str:
-    # print(f"decode: logits shape {logits.shape}")
-    # [4, vocab_size]
     probabilities = torch.softmax(logits, dim=-1)
     idx = torch.argmax(probabilities, dim=-1, keepdim=True)
-    print(f"decode: idx shape {idx.shape}")
     token_list = [xs[0] for xs in idx.tolist()]
-    print(f"decode: token_list {token_list}")
-    # return tokenizer.decode(idx.squeeze(0).tolist())
     return tokenizer.decode(token_list)
 
 class SimpleMTP(nn.Module):
@@ -610,7 +605,7 @@ class SimpleMTP(nn.Module):
                 # 5) unembed -> logits
                 logits = self.token_unembedding(h_curr)
                 if debug_print:
-                    print("Prediction:", decode(logits))
+                    print(f"Prediction {i}:", decode(logits))
                 logits_k.append(logits)
 
                 # 6) chain hidden for next depth
@@ -626,7 +621,7 @@ class SimpleMTP(nn.Module):
         return out
 
 
-# In[ ]:
+# In[11]:
 
 
 class DeepSeekModel(nn.Module):
@@ -671,7 +666,7 @@ class DeepSeekModel(nn.Module):
         return next(self.parameters()).device
 
 
-# In[ ]:
+# In[12]:
 
 
 import tiktoken
@@ -725,7 +720,7 @@ if __name__ == "__main__":
     )  # should output "Hello, I am Featureiman Byeswickattribute argue"
 
 
-# In[ ]:
+# In[13]:
 
 
 def count_parameters(model, trainable_only=True):
@@ -733,7 +728,7 @@ def count_parameters(model, trainable_only=True):
                if (p.requires_grad or not trainable_only))
 
 
-# In[ ]:
+# In[14]:
 
 
 import urllib.request
@@ -878,7 +873,7 @@ def train_verdict(model: DeepSeekModel, epochs: int = 10) -> float:
     return train_simple_text(model=model, text=text, cfg=verdict_training_config)
 
 
-# In[ ]:
+# In[15]:
 
 
 def text_to_token_ids(
@@ -912,7 +907,7 @@ def trained_example(model: DeepSeekModel, start_context, new_tokens = 10):
 # trained_example(model, "Jack thought", new_tokens=43)
 
 
-# In[ ]:
+# In[16]:
 
 
 END_OF_TEXT = 50256
@@ -1012,7 +1007,7 @@ class DeepSeekCompletion(training.ExampleGenerator):
         )
 
 
-# In[ ]:
+# In[17]:
 
 
 # model = DeepSeekModel(cfg=DeepSeekMedium)
@@ -1022,7 +1017,7 @@ model = DeepSeekModel(cfg=DeepSeekSmall)
 count_parameters(model)
 
 
-# In[ ]:
+# In[18]:
 
 
 def mtp_training_data(n: int):
@@ -1049,7 +1044,7 @@ mtp_cfg = DeepSeekSmall.copy()
 mtp_cfg['mtp'] = 2
 model = DeepSeekModel(cfg=mtp_cfg)
 
-mtp_train, mtp_val = training.text_training_loaders(mtp_training_data(10_000), smoke_training_cfg)
+mtp_train, mtp_val = training.text_training_loaders(mtp_training_data(10_000), smoke_training_cfg, batch_size=1)
 optimizer = training.default_optimizer(
     model,
     smoke_training_cfg
@@ -1069,7 +1064,7 @@ training.train(
     ),
     # save_name="wp_small_trial",
 )
-syntax error to keep the rest of the notebook from being executed
+syntax_error_to_keep_the_rest_of_the_notebook_from_being_executed
 
 
 # In[ ]:
