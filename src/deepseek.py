@@ -496,7 +496,7 @@ class ClearableSequential(nn.Sequential):
             m.clear()
 
 
-# In[ ]:
+# In[10]:
 
 
 import tiktoken
@@ -648,6 +648,7 @@ class DeepSeekModel(nn.Module):
         self.output = nn.Linear(cfg["emb_dim"], cfg["vocab_size"], bias=False)
 
         self.mtp = SimpleMTP(cfg=cfg, emb_dim=cfg["emb_dim"], vocab_size=cfg['vocab_size'], prediction_length=cfg['mtp'], n_heads=0)
+        self.hidden_state = None
 
     def clear(self):
         self.transformer_blocks.clear()
@@ -659,6 +660,9 @@ class DeepSeekModel(nn.Module):
         x = self.dropout(x)
         x = self.transformer_blocks(x)
         x = self.layer_norm(x)
+
+        self.hidden_state = x
+
         logits = self.output(x)
         return logits
 
@@ -1025,7 +1029,7 @@ def mtp_training_data(n: int):
     return " ".join(segments)
 
 
-# In[ ]:
+# In[19]:
 
 
 import training
@@ -1065,6 +1069,12 @@ training.train(
     # save_name="wp_small_trial",
 )
 syntax_error_to_keep_the_rest_of_the_notebook_from_being_executed
+
+
+# In[ ]:
+
+
+text_completion_topk(model, "one two three one two three one two three one two three one two three one two three one two three one two three one two ")
 
 
 # In[ ]:

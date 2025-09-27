@@ -379,6 +379,7 @@ def cross_entropy_loss_for_batch(
     model: gpt.GPTModel,
     input_batch: torch.Tensor,
     target_batch: torch.Tensor,
+    logits: Optional[torch.Tensor] = None,
     classification: bool = False,
 ) -> torch.Tensor:
     """Returns the model's loss for the given batch. The loss can be used to train the model.
@@ -387,7 +388,8 @@ def cross_entropy_loss_for_batch(
     if DEBUG:
         debug_batch(input_batch=input_batch, target_batch=target_batch)
     input_batch, target_batch = input_batch.to(device), target_batch.to(device)
-    logits = model(input_batch)
+    if logits is None:
+        logits = model(input_batch)
     if classification:
         logits = logits[:, -1, :]
         return nn.functional.cross_entropy(logits, target_batch)
@@ -936,11 +938,11 @@ def train(
                     model.clear()
 
                     # Actual training
-                    # logits = model(input_batch.to(model.device()))
+                    logits = model(input_batch.to(model.device()))
                     if model.cfg.get("mtp", 0) > 0:
                         # Experiment with this later:
                         # init_hidden = model.transformer_blocks[-1].feedforward.weights
-                        init_hidden = None
+                        init_hidden = model.hidden_state
                         debug = cfg["eval_freq"] > 0 and global_step % cfg["eval_freq"] == 0
                         if debug:
                             input_tokens = tokenizer.decode(input_batch[0].tolist())
@@ -950,15 +952,24 @@ def train(
                             init_hidden=init_hidden,
                             debug_print=debug,
                         )
-                        loss = model.mtp.loss(
+                        mtp_loss = model.mtp.loss(
                             targets=target_batch,
                             mtp_logits=mtp_logits
                         )
+                        ce_loss = cross_entropy_loss_for_batch(
+                            model,
+                            input_batch=input_batch,
+                            target_batch=target_batch,
+                            logits=logits,
+                            classification=cfg["classification"],
+                        )
+                        loss = ce_loss + mtp_loss
                     else:
                         loss = cross_entropy_loss_for_batch(
                             model,
                             input_batch=input_batch,
                             target_batch=target_batch,
+                            logits=logits,
                             classification=cfg["classification"],
                         )
                     loss_val = loss.item()
