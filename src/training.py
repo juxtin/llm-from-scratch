@@ -940,10 +940,9 @@ def train(
                     # Actual training
                     logits = model(input_batch.to(model.device()))
                     if model.cfg.get("mtp", 0) > 0:
-                        # Experiment with this later:
-                        # init_hidden = model.transformer_blocks[-1].feedforward.weights
                         init_hidden = model.hidden_state
-                        debug = cfg["eval_freq"] > 0 and global_step % cfg["eval_freq"] == 0
+                        # remove `False and ` to enable MTP debug printing 
+                        debug = False and cfg["eval_freq"] > 0 and global_step % cfg["eval_freq"] == 0
                         if debug:
                             input_tokens = tokenizer.decode(input_batch[0].tolist())
                             print(f"input_batch: {input_tokens}")

@@ -1029,7 +1029,7 @@ def mtp_training_data(n: int):
     return " ".join(segments)
 
 
-# In[ ]:
+# In[19]:
 
 
 import training
@@ -1071,7 +1071,7 @@ training.train(
 syntax_error_to_keep_the_rest_of_the_notebook_from_being_executed
 
 
-# In[23]:
+# In[ ]:
 
 
 text_completion_topk(model, "two three")
