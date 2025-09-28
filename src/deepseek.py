@@ -1029,7 +1029,7 @@ def mtp_training_data(n: int):
     return " ".join(segments)
 
 
-# In[19]:
+# In[ ]:
 
 
 import training
@@ -1048,7 +1048,7 @@ mtp_cfg = DeepSeekSmall.copy()
 mtp_cfg['mtp'] = 2
 model = DeepSeekModel(cfg=mtp_cfg)
 
-mtp_train, mtp_val = training.text_training_loaders(mtp_training_data(10_000), smoke_training_cfg, batch_size=1)
+mtp_train, mtp_val = training.text_training_loaders(mtp_training_data(10_000), smoke_training_cfg, batch_size=4)
 optimizer = training.default_optimizer(
     model,
     smoke_training_cfg
@@ -1071,10 +1071,10 @@ training.train(
 syntax_error_to_keep_the_rest_of_the_notebook_from_being_executed
 
 
-# In[ ]:
+# In[23]:
 
 
-text_completion_topk(model, "one two three one two three one two three one two three one two three one two three one two three one two three one two ")
+text_completion_topk(model, "two three")
 
 
 # In[ ]:
